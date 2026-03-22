@@ -9,6 +9,7 @@
 #include <algorithm>
 #include <chrono>
 #include <cctype>
+#include <cstdint>
 #include <filesystem>
 #include <utility>
 
@@ -201,20 +202,6 @@ DownloadResult DownloadService::execute(const DownloadRequest& request, TaskQueu
         return result;
     }
 
-    if (!request.overwriteExisting && std::filesystem::exists(request.destination)) {
-        result.error = "download destination already exists";
-        pipeline.advance_step("prepare", TaskStatus::Failed, result.error);
-        if (queue) {
-            queue->complete_step(result.plan.id, "prepare", TaskStatus::Failed, result.error);
-        }
-        result.plan = pipeline.plan();
-        result.taskResult = pipeline.finish(result.error);
-        result.logs.insert(result.logs.end(), result.taskResult.logs.begin(), result.taskResult.logs.end());
-        result.state = DownloadState::Failed;
-        result.success = false;
-        return result;
-    }
-
     std::string prepareError;
     if (!dawn::infra::fs::ensure_parent_directory(request.destination, &prepareError)) {
         result.error = prepareError;
@@ -236,6 +223,27 @@ DownloadResult DownloadService::execute(const DownloadRequest& request, TaskQueu
     }
     result.logs.push_back("prepare: destination ready");
 
+    const bool resumeRequested = !request.overwriteExisting && std::filesystem::exists(request.destination);
+    std::uintmax_t existingBytes = 0;
+    if (resumeRequested) {
+        std::string sizeError;
+        existingBytes = dawn::infra::fs::file_size(request.destination, &sizeError);
+        if (!sizeError.empty()) {
+            result.error = sizeError;
+            pipeline.advance_step("prepare", TaskStatus::Failed, result.error);
+            if (queue) {
+                queue->complete_step(result.plan.id, "prepare", TaskStatus::Failed, result.error);
+            }
+            result.plan = pipeline.plan();
+            result.taskResult = pipeline.finish(result.error);
+            result.logs.insert(result.logs.end(), result.taskResult.logs.begin(), result.taskResult.logs.end());
+            result.state = DownloadState::Failed;
+            result.success = false;
+            return result;
+        }
+        result.logs.push_back("resume from existing file size: " + std::to_string(existingBytes));
+    }
+
     const int retryCount = std::max(0, request.retryCount);
     const int maxAttempts = retryCount + 1;
     std::string lastError;
@@ -245,7 +253,12 @@ DownloadResult DownloadService::execute(const DownloadRequest& request, TaskQueu
         result.artifact.attempts = attempt;
         result.logs.push_back(make_step_detail("download attempt", attempt, maxAttempts));
 
-        const auto response = client_->send(make_get_request(request.url));
+        auto downloadRequest = make_get_request(request.url);
+        if (resumeRequested) {
+            downloadRequest.headers.emplace("Range", "bytes=" + std::to_string(existingBytes) + "-");
+        }
+
+        const auto response = client_->send(downloadRequest);
         if (!response.success()) {
             lastError = "http status " + std::to_string(response.statusCode);
             result.logs.push_back(make_download_error("download failed", attempt, maxAttempts, lastError));
@@ -256,7 +269,17 @@ DownloadResult DownloadService::execute(const DownloadRequest& request, TaskQueu
         }
 
         std::string writeError;
-        if (!dawn::infra::fs::write_binary_file(request.destination, response.body, &writeError)) {
+        const bool appendResponse = resumeRequested && response.statusCode == 206;
+        if (appendResponse) {
+            if (!dawn::infra::fs::append_binary_file(request.destination, response.body, &writeError)) {
+                lastError = writeError;
+                result.logs.push_back(make_download_error("append failed", attempt, maxAttempts, lastError));
+                if (attempt < maxAttempts) {
+                    continue;
+                }
+                break;
+            }
+        } else if (!dawn::infra::fs::write_binary_file(request.destination, response.body, &writeError)) {
             lastError = writeError;
             result.logs.push_back(make_download_error("write failed", attempt, maxAttempts, lastError));
             if (attempt < maxAttempts) {
@@ -265,7 +288,9 @@ DownloadResult DownloadService::execute(const DownloadRequest& request, TaskQueu
             break;
         }
 
-        result.artifact.bytesWritten = response.body.size();
+        result.artifact.bytesWritten = appendResponse
+            ? static_cast<std::size_t>(existingBytes + response.body.size())
+            : response.body.size();
         result.logs.push_back("download wrote " + std::to_string(result.artifact.bytesWritten) + " bytes");
         pipeline.advance_step("download", TaskStatus::Succeeded, "download completed");
         if (queue) {
@@ -289,7 +314,7 @@ DownloadResult DownloadService::execute(const DownloadRequest& request, TaskQueu
         return result;
     }
 
-    result.artifact.checksum = dawn::infra::hash::sha256_hex_file(request.destination, &lastError);
+    result.artifact.checksum = dawn::infra::hash::sha256_file_hex(request.destination, &lastError);
     if (result.artifact.checksum.empty()) {
         result.error = lastError.empty() ? "failed to compute checksum" : lastError;
         pipeline.advance_step("verify", TaskStatus::Failed, result.error);

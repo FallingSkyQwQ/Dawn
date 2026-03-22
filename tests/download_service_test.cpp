@@ -109,3 +109,36 @@ TEST(DownloadService, FailsOnHashMismatch) {
 
     std::filesystem::remove_all(root);
 }
+
+TEST(DownloadService, ResumesPartialDownloadsWithRangeHeader) {
+    auto client = std::make_shared<dawn::infra::net::FakeHttpClient>();
+    client->push_response(dawn::infra::net::HttpResponse{206, {}, "world"});
+    client->expect_header("Range", "bytes=6-");
+
+    const auto root = std::filesystem::temp_directory_path() / "dawn-download-resume";
+    std::filesystem::remove_all(root);
+    const auto destination = root / "artifact.bin";
+
+    std::string error;
+    ASSERT_TRUE(dawn::infra::fs::write_binary_file(destination, "hello ", &error)) << error;
+
+    DownloadService service(client);
+    DownloadRequest request;
+    request.id = "download-4";
+    request.title = "Resume Artifact";
+    request.url = "https://example.invalid/artifact.bin";
+    request.destination = destination;
+    request.overwriteExisting = false;
+    request.expectedHash = dawn::infra::hash::sha256_hex("hello world");
+
+    const auto result = service.execute(request);
+
+    EXPECT_TRUE(result.success);
+    EXPECT_EQ(result.state, DownloadState::Completed);
+    EXPECT_TRUE(client->expectations_met()) << (client->validation_errors().empty() ? std::string() : client->validation_errors().front());
+    EXPECT_EQ(read_file(destination), "hello world");
+    EXPECT_EQ(result.artifact.bytesWritten, std::string("hello world").size());
+    EXPECT_EQ(result.artifact.checksum, dawn::infra::hash::sha256_file_hex(destination));
+
+    std::filesystem::remove_all(root);
+}

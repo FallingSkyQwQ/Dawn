@@ -2,9 +2,11 @@
 
 #include <cctype>
 #include <deque>
+#include <functional>
 #include <iomanip>
 #include <map>
 #include <memory>
+#include <optional>
 #include <sstream>
 #include <string>
 #include <string_view>
@@ -146,6 +148,8 @@ private:
 
 class FakeHttpClient final : public HttpClient {
 public:
+    using RequestValidator = std::function<std::optional<std::string>(const HttpRequest&)>;
+
     void push_response(HttpResponse response) {
         responses_.push_back(std::move(response));
     }
@@ -154,17 +158,47 @@ public:
         defaultResponse_ = std::move(response);
     }
 
+    void expect_header(std::string name, std::string value) {
+        expectedHeaders_.emplace_back(std::move(name), std::move(value));
+    }
+
+    void set_request_validator(RequestValidator validator) {
+        requestValidator_ = std::move(validator);
+    }
+
     const std::vector<HttpRequest>& requests() const noexcept {
         return requests_;
+    }
+
+    const std::vector<std::string>& validation_errors() const noexcept {
+        return validationErrors_;
+    }
+
+    bool expectations_met() const noexcept {
+        return validationErrors_.empty();
     }
 
     void clear() {
         requests_.clear();
         responses_.clear();
+        expectedHeaders_.clear();
+        validationErrors_.clear();
+        requestValidator_ = {};
     }
 
     HttpResponse send(const HttpRequest& request) override {
         requests_.push_back(request);
+        for (const auto& [name, value] : expectedHeaders_) {
+            const auto it = request.headers.find(name);
+            if (it == request.headers.end() || it->second != value) {
+                validationErrors_.push_back("missing or mismatched header: " + name + "=" + value);
+            }
+        }
+        if (requestValidator_) {
+            if (const auto error = requestValidator_(request); error.has_value()) {
+                validationErrors_.push_back(*error);
+            }
+        }
         if (!responses_.empty()) {
             auto response = std::move(responses_.front());
             responses_.pop_front();
@@ -177,6 +211,9 @@ private:
     std::deque<HttpResponse> responses_;
     HttpResponse defaultResponse_{500, {}, R"({"error":"no_response_configured"})"};
     std::vector<HttpRequest> requests_;
+    std::vector<std::pair<std::string, std::string>> expectedHeaders_;
+    std::vector<std::string> validationErrors_;
+    RequestValidator requestValidator_;
 };
 
 } // namespace dawn::infra::net

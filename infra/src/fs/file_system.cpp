@@ -33,6 +33,21 @@ bool ensure_parent_directory(const std::filesystem::path& path, std::string* err
     return ensure_directory(parent, error);
 }
 
+std::uintmax_t file_size(const std::filesystem::path& path, std::string* error) {
+    std::error_code ec;
+    const auto size = std::filesystem::file_size(path, ec);
+    if (ec) {
+        if (error) {
+            *error = ec.message();
+        }
+        return 0;
+    }
+    if (error) {
+        error->clear();
+    }
+    return size;
+}
+
 bool write_text_file(const std::filesystem::path& path, const std::string& text, std::string* error) {
     if (!ensure_parent_directory(path, error)) {
         return false;
@@ -74,6 +89,30 @@ bool write_binary_file(const std::filesystem::path& path, const std::string& dat
     if (!stream.good()) {
         if (error) {
             *error = "failed to write file: " + path.string();
+        }
+        return false;
+    }
+
+    return true;
+}
+
+bool append_binary_file(const std::filesystem::path& path, const std::string& data, std::string* error) {
+    if (!ensure_parent_directory(path, error)) {
+        return false;
+    }
+
+    std::ofstream stream(path, std::ios::binary | std::ios::app);
+    if (!stream.is_open()) {
+        if (error) {
+            *error = "failed to open file for appending: " + path.string();
+        }
+        return false;
+    }
+
+    stream.write(data.data(), static_cast<std::streamsize>(data.size()));
+    if (!stream.good()) {
+        if (error) {
+            *error = "failed to append file: " + path.string();
         }
         return false;
     }

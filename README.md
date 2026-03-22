@@ -71,11 +71,12 @@ The code is layered so that the core library can be tested without Qt.
 | --- | --- | --- |
 | Core instance storage | implemented | JSON-backed instance manifests and workbench model are wired in. |
 | Settings | implemented | Global settings model and JSON persistence are available. |
+| Integrity hashing | implemented | SHA-256 hashing is real and used by download verification. |
 | Accounts | protocol-adapter | Microsoft and offline caches exist; OAuth plus Xbox Live, XSTS, and Minecraft profile protocol layers are wired, transport defaults to fake on non-Windows. |
 | Java | scaffolded | Runtime discovery and profile stubs are present. |
 | Minecraft versions | scaffolded | Version classification and lookup are local stubs. |
 | Loaders | scaffolded | Fabric, Quilt, Forge, NeoForge, and OptiFine profiles are represented. |
-| Download queue | executable scaffold | Task queue, retrying file download, and checksum verification skeletons are present. |
+| Download queue | executable scaffold | Task queue, retrying file download, checksum verification, and basic resume support are present. |
 | Content install | executable scaffold | Mod/resourcepack/shader installs now resolve versions, download artifacts, deploy into instance folders, and write content locks. Modpack requests return `create instance required`. |
 | Diagnostics | scaffolded | Log rule matching returns human-readable categories. |
 | Backups | scaffolded | Snapshot metadata and restore plans are local stubs. |
@@ -89,6 +90,6 @@ The code is layered so that the core library can be tested without Qt.
 * Windows has a real WinHTTP transport; other platforms fall back to fake transport by default.
 * Real Minecraft runtime orchestration is still stubbed.
 * FluentUIbi integration is behind a CMake switch and falls back when the submodule is not present.
-* Download executor status: executable scaffold only; resume support, parallel transfer, and deeper corruption recovery are still pending.
+* Download executor status: executable scaffold only; parallel transfer and deeper corruption recovery are still pending.
 * Instance install chain status: mod, resourcepack, and shader installs now flow through version resolution, download, deployment, and content lock persistence. Modpack installs still stop at "create instance required".
 * Microsoft identity protocol coverage now reaches Minecraft profile, but end-to-end live account login still needs real-world integration testing against the platform services.
