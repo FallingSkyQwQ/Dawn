@@ -47,6 +47,7 @@ if(TARGET GTest::gtest)
             hash_test.cpp
             http_client_factory_test.cpp
             instance_manifest_test.cpp
+            local_package_service_test.cpp
             microsoft_identity_service_test.cpp
             microsoft_oauth_service_test.cpp
             modrinth_provider_protocol_test.cpp

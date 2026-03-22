@@ -39,6 +39,7 @@ class AppViewModel final : public QObject {
     Q_PROPERTY(QVariantList installDiagnostics READ installDiagnostics NOTIFY dataChanged)
     Q_PROPERTY(QVariantList rollbackEvents READ rollbackEvents NOTIFY dataChanged)
     Q_PROPERTY(QVariantList repairExecutionLogs READ repairExecutionLogs NOTIFY dataChanged)
+    Q_PROPERTY(QVariantMap lastDroppedFileResult READ lastDroppedFileResult NOTIFY dataChanged)
     Q_PROPERTY(QVariantList wizardSteps READ wizardSteps NOTIFY dataChanged)
     Q_PROPERTY(int wizardStepIndex READ wizardStepIndex NOTIFY dataChanged)
     Q_PROPERTY(QString installPreviewStatus READ installPreviewStatus NOTIFY dataChanged)
@@ -78,6 +79,7 @@ public:
     [[nodiscard]] QVariantList installDiagnostics() const;
     [[nodiscard]] QVariantList rollbackEvents() const;
     [[nodiscard]] QVariantList repairExecutionLogs() const;
+    [[nodiscard]] QVariantMap lastDroppedFileResult() const;
     [[nodiscard]] QVariantList wizardSteps() const;
     [[nodiscard]] int wizardStepIndex() const;
     [[nodiscard]] QString installPreviewStatus() const;
@@ -114,6 +116,7 @@ public:
     Q_INVOKABLE bool executeRepairPlan(const QString& planId);
     Q_INVOKABLE bool executeRepairPlan(int planIndex);
     Q_INVOKABLE bool completeFirstLaunch();
+    Q_INVOKABLE QVariantMap handleDroppedFile(const QString& path, const QString& instanceId);
     Q_INVOKABLE void setUiMode(const QString& mode);
     Q_INVOKABLE void setJavaStrategy(const QString& strategy);
     Q_INVOKABLE void setLowDiskThresholdGb(int thresholdGb);
@@ -168,6 +171,7 @@ private:
     std::vector<dawn::core::InstallDiagnostic> installDiagnostics_;
     std::vector<dawn::core::ContentInstallResult::RollbackEvent> rollbackEvents_;
     std::vector<std::string> repairExecutionLogs_;
+    QVariantMap lastDroppedFileResult_;
     dawn::core::DependencyCheckResult installPreview_;
     QString installPreviewStatus_ = QStringLiteral("No install preview run");
     QString repairExecutionStatus_ = QStringLiteral("No repair run");

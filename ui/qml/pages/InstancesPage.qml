@@ -74,6 +74,81 @@ Item {
                 }
             }
 
+            DawnCard {
+                id: dropCard
+                Layout.fillWidth: true
+                Layout.preferredHeight: 210
+                title: "Local Drop Install"
+                subtitle: "Drop a jar, zip, or mrpack to classify it and install it into the active instance."
+
+                property bool dragActive: false
+
+                Item {
+                    anchors.fill: parent
+
+                    Rectangle {
+                        anchors.fill: parent
+                        radius: 18
+                        color: dropCard.dragActive ? Qt.rgba(0.18, 0.29, 0.44, 0.96) : Qt.rgba(1, 1, 1, 0.04)
+                        border.color: dropCard.dragActive ? "#8ec5ff" : Qt.rgba(1, 1, 1, 0.08)
+                        border.width: 1
+
+                        DropArea {
+                            anchors.fill: parent
+                            keys: ["text/uri-list"]
+                            onEntered: dropCard.dragActive = true
+                            onExited: dropCard.dragActive = false
+                            onDropped: function(drop) {
+                                dropCard.dragActive = false
+                                if (drop.urls.length > 0) {
+                                    appViewModel.handleDroppedFile(drop.urls[0].toLocalFile(), appViewModel.activeInstanceId)
+                                }
+                            }
+                        }
+
+                        Column {
+                            anchors.fill: parent
+                            anchors.margins: 18
+                            spacing: 10
+
+                            Text {
+                                text: dropCard.dragActive ? "Release to install into the active instance." : "Drag a local package here."
+                                color: "#f5f8fb"
+                                font.pixelSize: 18
+                                font.bold: true
+                            }
+
+                            Text {
+                                text: "Detected: " + (appViewModel.lastDroppedFileResult.detectedType || "unknown") + " | Status: " + (appViewModel.lastDroppedFileResult.status || "idle")
+                                color: "#9eb0c7"
+                                font.pixelSize: 12
+                            }
+
+                            Text {
+                                text: appViewModel.lastDroppedFileResult.message || "The workflow will resolve the target directory and record a local lock."
+                                color: "#dce5f0"
+                                font.pixelSize: 13
+                                wrapMode: Text.WordWrap
+                            }
+
+                            Text {
+                                visible: (appViewModel.lastDroppedFileResult.reasons || []).length > 0
+                                text: "Reasons: " + (appViewModel.lastDroppedFileResult.reasons || []).join("  |  ")
+                                color: "#92a3ba"
+                                font.pixelSize: 11
+                                wrapMode: Text.WordWrap
+                            }
+
+                            Text {
+                                text: "Target: " + (appViewModel.lastDroppedFileResult.targetInstanceId || appViewModel.activeInstanceId || "none")
+                                color: "#92a3ba"
+                                font.pixelSize: 11
+                            }
+                        }
+                    }
+                }
+            }
+
             RowLayout {
                 Layout.fillWidth: true
                 spacing: 16

@@ -260,3 +260,32 @@ TEST(AppViewModel, CacheCleanupSummaryIsExposed) {
 
     std::filesystem::remove_all(root);
 }
+
+TEST(AppViewModel, HandleDroppedFileInstallsLocalModAndExposesResult) {
+    const auto root = std::filesystem::temp_directory_path() / "dawn-app-view-model-drop";
+    std::filesystem::remove_all(root);
+
+    const auto instance = create_instance(root);
+    const auto modPath = root / "drop" / "local-mod.jar";
+
+    std::string error;
+    ASSERT_TRUE(dawn::infra::fs::write_binary_file(modPath, "fabric.mod.json", &error)) << error;
+
+    AppViewModel viewModel(QString::fromStdString(root.string()));
+    const auto result = viewModel.handleDroppedFile(
+        QString::fromStdString(modPath.string()),
+        QString::fromStdString(instance.id));
+
+    EXPECT_TRUE(result.value("success").toBool());
+    EXPECT_EQ(result.value("status").toString(), QStringLiteral("succeeded"));
+    EXPECT_EQ(result.value("detectedType").toString(), QStringLiteral("mod"));
+    EXPECT_FALSE(result.value("message").toString().isEmpty());
+    EXPECT_TRUE(std::filesystem::exists(result.value("deployedPath").toString().toStdString()));
+
+    const auto lastResult = viewModel.lastDroppedFileResult();
+    EXPECT_EQ(lastResult.value("path").toString(), QString::fromStdString(modPath.string()));
+    EXPECT_EQ(lastResult.value("targetInstanceId").toString(), QString::fromStdString(instance.id));
+    EXPECT_EQ(lastResult.value("status").toString(), QStringLiteral("succeeded"));
+
+    std::filesystem::remove_all(root);
+}

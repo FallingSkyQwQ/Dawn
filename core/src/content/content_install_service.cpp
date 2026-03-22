@@ -1,9 +1,11 @@
 #include "dawn/core/content/content_install_service.h"
 
 #include "dawn/core/pipeline/task_pipeline.h"
+#include "dawn/core/local/local_package_service.h"
 #include "dawn/core/service/task_queue.h"
 #include "dawn/core/serialization/manifest_codec.h"
 #include "dawn/infra/fs/file_system.h"
+#include "dawn/infra/hash/sha256.h"
 
 #include <algorithm>
 #include <chrono>
@@ -159,6 +161,27 @@ std::string filename_from_url(const std::string& url) {
     const auto clean = cut == std::string::npos ? url : url.substr(0, cut);
     const auto filename = std::filesystem::path(clean).filename().string();
     return filename.empty() ? std::string() : filename;
+}
+
+std::filesystem::path local_staging_path_for(const InstanceManifest& instance, const std::filesystem::path& sourcePath, LocalPackageType type) {
+    const std::filesystem::path gameDir = instance.gameDir.empty()
+        ? (std::filesystem::path(instance.id.empty() ? "instance" : instance.id) / "game")
+        : std::filesystem::path(instance.gameDir);
+    return gameDir / ".dawn" / "staging" / "local" / std::string(to_string(type)) / sanitize_component(sourcePath.stem().string()) / sourcePath.filename();
+}
+
+std::filesystem::path local_final_path_for(const InstanceManifest& instance, const std::filesystem::path& sourcePath, LocalPackageType type) {
+    return ContentInstallService::deployment_directory_for(LocalPackageService::project_type_for(type), instance) / sourcePath.filename();
+}
+
+InstallRequest make_local_install_request(const std::filesystem::path& sourcePath, LocalPackageType type, const std::string& hash) {
+    InstallRequest request;
+    request.provider = "local";
+    request.instanceId = "";
+    request.projectId = sanitize_component(sourcePath.stem().string());
+    request.versionId = hash.empty() ? timestamp_id() : hash;
+    request.projectType = LocalPackageService::project_type_for(type);
+    return request;
 }
 
 TaskPlan make_plan(const InstallRequest& request) {
@@ -847,6 +870,211 @@ ContentInstallResult ContentInstallService::install(const InstallRequest& reques
     result.status = ContentInstallStatus::Succeeded;
     result.success = true;
     result.message = "content installed";
+    return result;
+}
+
+ContentInstallResult ContentInstallService::install_local_file(const std::filesystem::path& sourcePath, const std::string& instanceId, TaskQueue* queue) const {
+    ContentInstallResult result;
+    LocalPackageService packageService;
+    const auto analysis = packageService.analyze(sourcePath);
+
+    const auto set_task_result = [&](TaskStatus status, const std::string& summary) {
+        result.taskResult.planId = result.plan.id;
+        result.taskResult.status = status;
+        result.taskResult.summary = summary;
+        result.taskResult.logs = result.logs;
+    };
+
+    result.logs.push_back("local install requested: " + sourcePath.generic_string());
+    result.diagnostics.push_back(InstallDiagnostic{
+        "local_package_detection",
+        analysis.type == LocalPackageType::Unknown ? PreflightSeverity::Warning : PreflightSeverity::Info,
+        analysis.type == LocalPackageType::Unknown
+            ? "could not classify the dropped local file"
+            : std::string("detected local ") + std::string(LocalPackageService::describe(analysis.type)),
+        analysis.reasons.empty() ? std::string("drop a jar or zip with a known manifest") : analysis.reasons.front(),
+        analysis.type == LocalPackageType::Unknown,
+    });
+
+    if (analysis.type == LocalPackageType::Unknown) {
+        result.status = ContentInstallStatus::Failed;
+        result.message = "unsupported local package";
+        result.logs.push_back(result.message);
+        result.plan = make_plan(make_local_install_request(sourcePath, analysis.type, ""));
+        result.plan.status = TaskStatus::Failed;
+        set_task_result(TaskStatus::Failed, result.message);
+        return result;
+    }
+
+    InstallRequest request = make_local_install_request(sourcePath, analysis.type, "");
+    request.instanceId = instanceId;
+    result.plan = make_plan(request);
+
+    if (analysis.type == LocalPackageType::Modpack) {
+        result.requiresNewInstance = true;
+        result.status = ContentInstallStatus::CreateInstanceRequired;
+        result.message = "local modpack requires creating a new instance";
+        result.plan.status = TaskStatus::Paused;
+        result.logs.push_back(result.message);
+
+        if (queue) {
+            result.queuedTaskId = queue->enqueue(result.plan);
+            queue->start(result.queuedTaskId);
+            queue->pause(result.queuedTaskId);
+        }
+        set_task_result(TaskStatus::Paused, result.message);
+        return result;
+    }
+
+    if (request.instanceId.empty()) {
+        result.status = ContentInstallStatus::Failed;
+        result.message = "target instance is required for local installs";
+        result.logs.push_back(result.message);
+        result.plan.status = TaskStatus::Failed;
+        set_task_result(TaskStatus::Failed, result.message);
+        return result;
+    }
+
+    std::string instanceError;
+    const auto instance = load_instance(request.instanceId, &instanceError);
+    if (!instance) {
+        const auto message = instanceError.empty() ? "instance not found" : instanceError;
+        fail_result(&result, nullptr, queue, "resolve", message);
+        add_rollback_event(&result, "resolve", "abort local install", sourcePath, "blocked", message);
+        return result;
+    }
+
+    std::string hashError;
+    const auto checksum = dawn::infra::hash::sha256_file_hex(sourcePath, &hashError);
+    if (checksum.empty()) {
+        result.status = ContentInstallStatus::Failed;
+        result.message = hashError.empty() ? "failed to hash local file" : hashError;
+        result.logs.push_back(result.message);
+        result.plan.status = TaskStatus::Failed;
+        add_rollback_event(&result, "resolve", "abort local install", sourcePath, "blocked", result.message);
+        set_task_result(TaskStatus::Failed, result.message);
+        return result;
+    }
+
+    const auto finalPath = local_final_path_for(*instance, sourcePath, analysis.type);
+    const auto stagingPath = local_staging_path_for(*instance, sourcePath, analysis.type);
+    result.deployedPath = finalPath;
+    result.lockPath = lock_path_for(request, *instance);
+
+    auto rollback_artifacts = [&](const std::string& step, bool includeFinalPath, bool includeLockPath) {
+        cleanup_target(&result, step, "remove staging", stagingPath);
+        if (includeFinalPath) {
+            cleanup_target(&result, step, "remove deployed artifact", finalPath);
+        }
+        if (includeLockPath && !result.lockPath.empty()) {
+            cleanup_target(&result, step, "remove lock", result.lockPath);
+        }
+    };
+
+    if (queue) {
+        result.queuedTaskId = queue->enqueue(result.plan);
+        queue->start(result.queuedTaskId);
+    }
+    TaskPipeline pipeline(result.plan);
+    pipeline.start();
+
+    pipeline.advance_step("resolve", TaskStatus::Succeeded, "local package recognized");
+    if (queue && !result.queuedTaskId.empty()) {
+        queue->complete_step(result.queuedTaskId, "resolve", TaskStatus::Succeeded, "local package recognized");
+    }
+    result.logs.push_back("detected local package: " + std::string(LocalPackageService::describe(analysis.type)));
+
+    if (!ensure_directory(stagingPath.parent_path(), &hashError)) {
+        result.message = hashError;
+        fail_result(&result, &pipeline, queue, "download", result.message);
+        add_rollback_event(&result, "download", "abort local install", stagingPath, "failed", result.message);
+        return result;
+    }
+    if (!ensure_directory(finalPath.parent_path(), &hashError)) {
+        result.message = hashError;
+        fail_result(&result, &pipeline, queue, "deploy", result.message);
+        add_rollback_event(&result, "deploy", "abort local install", finalPath, "failed", result.message);
+        return result;
+    }
+
+    std::error_code ec;
+    std::filesystem::copy_file(sourcePath, stagingPath, std::filesystem::copy_options::overwrite_existing, ec);
+    if (ec) {
+        result.message = ec.message();
+        fail_result(&result, &pipeline, queue, "download", result.message);
+        rollback_artifacts("download", false, false);
+        return result;
+    }
+
+    result.downloadResult.success = true;
+    result.downloadResult.state = DownloadState::Completed;
+    result.downloadResult.artifact.requestId = make_install_id(request);
+    result.downloadResult.artifact.title = sourcePath.filename().string();
+    result.downloadResult.artifact.sourceUrl = sourcePath.generic_string();
+    result.downloadResult.artifact.destination = stagingPath;
+    result.downloadResult.artifact.checksum = checksum;
+    result.downloadResult.artifact.bytesWritten = static_cast<std::size_t>(dawn::infra::fs::file_size(sourcePath));
+    result.downloadResult.artifact.attempts = 1;
+    result.downloadResult.artifact.verified = true;
+    result.downloadResult.logs.push_back("staged local file to " + stagingPath.generic_string());
+    add_logs(&result, result.downloadResult.logs, "download: ");
+
+    pipeline.advance_step("download", TaskStatus::Succeeded, "local file staged");
+    if (queue && !result.queuedTaskId.empty()) {
+        queue->complete_step(result.queuedTaskId, "download", TaskStatus::Succeeded, "local file staged");
+    }
+
+    std::filesystem::copy_file(stagingPath, finalPath, std::filesystem::copy_options::overwrite_existing, ec);
+    if (ec) {
+        result.message = ec.message();
+        fail_result(&result, &pipeline, queue, "deploy", result.message);
+        rollback_artifacts("deploy", false, false);
+        return result;
+    }
+
+    pipeline.advance_step("deploy", TaskStatus::Succeeded, "local file deployed");
+    if (queue && !result.queuedTaskId.empty()) {
+        queue->complete_step(result.queuedTaskId, "deploy", TaskStatus::Succeeded, "local file deployed");
+    }
+    result.logs.push_back("deployed to " + finalPath.generic_string());
+
+    result.lock.provider = "local";
+    result.lock.projectId = request.projectId;
+    result.lock.versionId = checksum;
+    result.lock.fileHash = checksum;
+    result.lock.installedPath = finalPath;
+    result.lock.enabled = true;
+    result.lock.dependencies.clear();
+
+    std::string lockError;
+    if (!write_text_file(result.lockPath, content_lock_to_text(result.lock), &lockError)) {
+        result.message = lockError;
+        fail_result(&result, &pipeline, queue, "lock", result.message);
+        rollback_artifacts("lock", true, true);
+        return result;
+    }
+
+    pipeline.advance_step("lock", TaskStatus::Succeeded, "content lock written");
+    if (queue && !result.queuedTaskId.empty()) {
+        queue->complete_step(result.queuedTaskId, "lock", TaskStatus::Succeeded, "content lock written");
+    }
+
+    {
+        std::error_code cleanupEc;
+        const auto removed = std::filesystem::remove_all(stagingPath, cleanupEc);
+        if (cleanupEc) {
+            result.logs.push_back("cleanup: failed to remove staging " + stagingPath.generic_string() + ": " + cleanupEc.message());
+        } else if (removed > 0) {
+            result.logs.push_back("cleanup: removed staging " + stagingPath.generic_string());
+        }
+    }
+
+    result.plan = pipeline.plan();
+    result.taskResult = pipeline.finish("local file installed");
+    result.logs.insert(result.logs.end(), result.taskResult.logs.begin(), result.taskResult.logs.end());
+    result.status = ContentInstallStatus::Succeeded;
+    result.success = true;
+    result.message = "local file installed";
     return result;
 }
 

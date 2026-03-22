@@ -59,6 +59,7 @@ public:
     TaskPlan build_install_plan(const InstallRequest& request) const;
     DependencyCheckResult preview(const InstallRequest& request, IContentProvider& provider) const;
     ContentInstallResult install(const InstallRequest& request, IContentProvider& provider, TaskQueue* queue = nullptr) const;
+    ContentInstallResult install_local_file(const std::filesystem::path& sourcePath, const std::string& instanceId, TaskQueue* queue = nullptr) const;
     ContentInstallResult execute_repair_plan(const InstallRequest& request, const DependencyCheckResult& preview, IContentProvider& provider, TaskQueue* queue = nullptr) const;
 
     static std::filesystem::path deployment_directory_for(ProjectType type, const InstanceManifest& instance);

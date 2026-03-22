@@ -527,6 +527,81 @@ TEST(ContentInstallService, RoutesResourcepackAndShaderToTargetDirectories) {
     std::filesystem::remove_all(root);
 }
 
+TEST(ContentInstallService, InstallsLocalModResourcepackAndShaderToCorrectDirectories) {
+    const auto root = std::filesystem::temp_directory_path() / "dawn-content-install-local-packages";
+    std::filesystem::remove_all(root);
+
+    auto instance = create_instance(root, "Local Package Instance");
+
+    const auto modPath = root / "drop" / "local-mod.jar";
+    const auto resourcepackPath = root / "drop" / "local-resource.zip";
+    const auto shaderPath = root / "drop" / "local-shader.zip";
+
+    std::string error;
+    ASSERT_TRUE(dawn::infra::fs::write_binary_file(modPath, "fabric.mod.json", &error)) << error;
+    ASSERT_TRUE(dawn::infra::fs::write_binary_file(resourcepackPath, "pack.mcmeta", &error)) << error;
+    ASSERT_TRUE(dawn::infra::fs::write_binary_file(shaderPath, "shaders.properties", &error)) << error;
+
+    auto client = make_http_client("unused");
+    DownloadService downloadService(client);
+    ContentInstallService service(root, downloadService);
+    TaskQueue queue;
+
+    const auto modResult = service.install_local_file(modPath, instance.id, &queue);
+    EXPECT_TRUE(modResult.success);
+    EXPECT_EQ(modResult.status, ContentInstallStatus::Succeeded);
+    EXPECT_EQ(modResult.deployedPath.parent_path().filename().string(), "mods");
+    EXPECT_TRUE(std::filesystem::exists(modResult.deployedPath));
+    EXPECT_TRUE(std::filesystem::exists(modResult.lockPath));
+    EXPECT_EQ(modResult.lock.provider, "local");
+
+    const auto resourcepackResult = service.install_local_file(resourcepackPath, instance.id, &queue);
+    EXPECT_TRUE(resourcepackResult.success);
+    EXPECT_EQ(resourcepackResult.status, ContentInstallStatus::Succeeded);
+    EXPECT_EQ(resourcepackResult.deployedPath.parent_path().filename().string(), "resourcepacks");
+    EXPECT_TRUE(std::filesystem::exists(resourcepackResult.deployedPath));
+    EXPECT_TRUE(std::filesystem::exists(resourcepackResult.lockPath));
+    EXPECT_EQ(resourcepackResult.lock.provider, "local");
+
+    const auto shaderResult = service.install_local_file(shaderPath, instance.id, &queue);
+    EXPECT_TRUE(shaderResult.success);
+    EXPECT_EQ(shaderResult.status, ContentInstallStatus::Succeeded);
+    EXPECT_EQ(shaderResult.deployedPath.parent_path().filename().string(), "shaderpacks");
+    EXPECT_TRUE(std::filesystem::exists(shaderResult.deployedPath));
+    EXPECT_TRUE(std::filesystem::exists(shaderResult.lockPath));
+    EXPECT_EQ(shaderResult.lock.provider, "local");
+
+    std::filesystem::remove_all(root);
+}
+
+TEST(ContentInstallService, ReportsLocalModpackCreateInstanceRequired) {
+    const auto root = std::filesystem::temp_directory_path() / "dawn-content-install-local-modpack";
+    std::filesystem::remove_all(root);
+
+    auto instance = create_instance(root, "Local Modpack Instance");
+    const auto modpackPath = root / "drop" / "local-pack.mrpack";
+
+    std::string error;
+    ASSERT_TRUE(dawn::infra::fs::write_binary_file(modpackPath, "modrinth.index.json", &error)) << error;
+
+    DownloadService downloadService(make_http_client("unused"));
+    ContentInstallService service(root, downloadService);
+    TaskQueue queue;
+
+    const auto result = service.install_local_file(modpackPath, instance.id, &queue);
+
+    EXPECT_FALSE(result.success);
+    EXPECT_TRUE(result.requiresNewInstance);
+    EXPECT_EQ(result.status, ContentInstallStatus::CreateInstanceRequired);
+    EXPECT_EQ(result.plan.status, TaskStatus::Paused);
+    EXPECT_FALSE(result.plan.steps.empty());
+    EXPECT_EQ(result.plan.steps.front().id, "create-instance");
+    EXPECT_EQ(queue.tasks().size(), 1u);
+    EXPECT_EQ(queue.tasks().front().status, TaskStatus::Paused);
+
+    std::filesystem::remove_all(root);
+}
+
 TEST(ContentInstallService, RollsBackTargetFilesWhenLockWriteFails) {
     const auto root = std::filesystem::temp_directory_path() / "dawn-content-install-rollback";
     std::filesystem::remove_all(root);

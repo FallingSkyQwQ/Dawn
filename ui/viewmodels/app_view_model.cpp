@@ -1,6 +1,7 @@
 #include "app_view_model.h"
 
 #include "dawn/core/model/instance_workbench.h"
+#include "dawn/core/local/local_package_service.h"
 #include "dawn/core/provider/modrinth_provider.h"
 #include "dawn/infra/net/http_client.h"
 
@@ -100,6 +101,20 @@ QString java_strategy_text(dawn::core::JavaStrategy strategy) {
         return QStringLiteral("downloaded");
     }
     return QStringLiteral("auto");
+}
+
+QString content_install_status_text(dawn::core::ContentInstallStatus status) {
+    switch (status) {
+    case dawn::core::ContentInstallStatus::Pending:
+        return QStringLiteral("pending");
+    case dawn::core::ContentInstallStatus::Succeeded:
+        return QStringLiteral("succeeded");
+    case dawn::core::ContentInstallStatus::Failed:
+        return QStringLiteral("failed");
+    case dawn::core::ContentInstallStatus::CreateInstanceRequired:
+        return QStringLiteral("create-instance-required");
+    }
+    return QStringLiteral("pending");
 }
 
 } // namespace
@@ -234,6 +249,10 @@ QVariantList AppViewModel::repairExecutionLogs() const {
         logs.push_back(to_qstring(log));
     }
     return logs;
+}
+
+QVariantMap AppViewModel::lastDroppedFileResult() const {
+    return lastDroppedFileResult_;
 }
 
 QVariantList AppViewModel::wizardSteps() const {
@@ -608,6 +627,69 @@ bool AppViewModel::completeFirstLaunch() {
     wizardStepIndex_ = 0;
     persistSettings();
     return true;
+}
+
+QVariantMap AppViewModel::handleDroppedFile(const QString& path, const QString& instanceId) {
+    dawn::core::LocalPackageService packageService;
+    const auto sourcePath = std::filesystem::path(to_std(path));
+    const auto analysis = packageService.analyze(sourcePath);
+    const auto resolvedInstanceId = instanceId.isEmpty() ? activeInstanceId() : instanceId;
+
+    QVariantMap result{
+        {"path", path},
+        {"targetInstanceId", resolvedInstanceId},
+        {"displayName", to_qstring(analysis.displayName)},
+        {"detectedType", to_qstring(std::string(dawn::core::to_string(analysis.type)))},
+        {"confidence", analysis.confidence},
+        {"archive", analysis.archive},
+        {"reasons", strings_to_variant_list(analysis.reasons)},
+        {"requiresNewInstance", analysis.type == dawn::core::LocalPackageType::Modpack},
+        {"success", false},
+        {"status", QStringLiteral("failed")},
+    };
+
+    if (analysis.type == dawn::core::LocalPackageType::Unknown) {
+        result.insert("message", QStringLiteral("could not classify the dropped file"));
+        result.insert("logs", QVariantList{QStringLiteral("local package analysis failed")});
+        lastDroppedFileResult_ = result;
+        emit dataChanged();
+        return result;
+    }
+
+    const auto installResult = contentInstallService_.install_local_file(sourcePath, to_std(resolvedInstanceId), &taskQueue_);
+    QVariantList logs;
+    for (const auto& log : installResult.logs) {
+        logs.push_back(to_qstring(log));
+    }
+    QVariantList rollbackEvents;
+    for (const auto& event : installResult.rollbackEvents) {
+        rollbackEvents.push_back(rollbackEventToVariant(event));
+    }
+    QVariantList diagnostics;
+    for (const auto& diagnostic : installResult.diagnostics) {
+        diagnostics.push_back(diagnosticToVariant(diagnostic));
+    }
+
+    result.insert("success", installResult.success);
+    result.insert("status", content_install_status_text(installResult.status));
+    result.insert("message", to_qstring(installResult.message));
+    result.insert("requiresNewInstance", installResult.requiresNewInstance);
+    result.insert("deployedPath", to_qstring(installResult.deployedPath.generic_string()));
+    result.insert("lockPath", to_qstring(installResult.lockPath.generic_string()));
+    result.insert("logs", logs);
+    result.insert("diagnostics", diagnostics);
+    result.insert("rollbackEvents", rollbackEvents);
+    result.insert("planId", to_qstring(installResult.plan.id));
+    result.insert("planStatus", task_status_text(installResult.plan.status));
+    result.insert("taskId", to_qstring(installResult.queuedTaskId));
+    result.insert("fileHash", to_qstring(installResult.lock.fileHash));
+    result.insert("provider", to_qstring(installResult.lock.provider));
+    result.insert("projectId", to_qstring(installResult.lock.projectId));
+    result.insert("versionId", to_qstring(installResult.lock.versionId));
+
+    lastDroppedFileResult_ = result;
+    emit dataChanged();
+    return result;
 }
 
 void AppViewModel::setUiMode(const QString& mode) {
