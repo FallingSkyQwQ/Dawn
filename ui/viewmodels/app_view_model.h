@@ -38,6 +38,8 @@ class AppViewModel final : public QObject {
     Q_PROPERTY(QVariantMap installPreview READ installPreview NOTIFY dataChanged)
     Q_PROPERTY(QVariantList installDiagnostics READ installDiagnostics NOTIFY dataChanged)
     Q_PROPERTY(QVariantList rollbackEvents READ rollbackEvents NOTIFY dataChanged)
+    Q_PROPERTY(QVariantList installLogs READ installLogs NOTIFY dataChanged)
+    Q_PROPERTY(QString installLogFilter READ installLogFilter WRITE setInstallLogFilter NOTIFY dataChanged)
     Q_PROPERTY(QVariantList repairExecutionLogs READ repairExecutionLogs NOTIFY dataChanged)
     Q_PROPERTY(QVariantMap lastDroppedFileResult READ lastDroppedFileResult NOTIFY dataChanged)
     Q_PROPERTY(QVariantList wizardSteps READ wizardSteps NOTIFY dataChanged)
@@ -78,6 +80,8 @@ public:
     [[nodiscard]] QVariantMap installPreview() const;
     [[nodiscard]] QVariantList installDiagnostics() const;
     [[nodiscard]] QVariantList rollbackEvents() const;
+    [[nodiscard]] QVariantList installLogs() const;
+    [[nodiscard]] QString installLogFilter() const;
     [[nodiscard]] QVariantList repairExecutionLogs() const;
     [[nodiscard]] QVariantMap lastDroppedFileResult() const;
     [[nodiscard]] QVariantList wizardSteps() const;
@@ -116,6 +120,7 @@ public:
     Q_INVOKABLE bool executeRepairPlan(const QString& planId);
     Q_INVOKABLE bool executeRepairPlan(int planIndex);
     Q_INVOKABLE bool completeFirstLaunch();
+    Q_INVOKABLE void setInstallLogFilter(const QString& filter);
     Q_INVOKABLE QVariantMap handleDroppedFile(const QString& path, const QString& instanceId);
     Q_INVOKABLE void setUiMode(const QString& mode);
     Q_INVOKABLE void setJavaStrategy(const QString& strategy);
@@ -130,6 +135,7 @@ signals:
     void dataChanged();
 
 private:
+    struct InstallLogEntry;
     [[nodiscard]] QVariantMap instanceToVariant(const dawn::core::InstanceManifest& manifest) const;
     [[nodiscard]] QVariantMap taskToVariant(const dawn::core::TaskPlan& plan) const;
     [[nodiscard]] QVariantMap stepToVariant(const dawn::core::TaskStep& step) const;
@@ -142,6 +148,7 @@ private:
     [[nodiscard]] QVariantMap repairPlanToVariant(const dawn::core::TaskPlan& plan, bool available) const;
     [[nodiscard]] QVariantMap diagnosticToVariant(const dawn::core::InstallDiagnostic& diagnostic) const;
     [[nodiscard]] QVariantMap rollbackEventToVariant(const dawn::core::ContentInstallResult::RollbackEvent& event) const;
+    [[nodiscard]] QVariantMap installLogToVariant(const InstallLogEntry& entry) const;
     [[nodiscard]] QVariantMap diskStatusToVariant(const dawn::core::DiskSpaceCheckResult& result) const;
     [[nodiscard]] QVariantMap cacheCleanupToVariant(const dawn::core::CacheCleanupResult& result) const;
     [[nodiscard]] std::size_t resourceCount(const dawn::core::InstanceManifest& manifest) const;
@@ -153,6 +160,7 @@ private:
     void updateSelectedContentPreview();
     void refreshSelectedContentVersions();
     void populateSearchResults(const dawn::core::SearchResult& result);
+    void recordInstallLog(const QString& type, const QString& targetInstanceId, bool success, const QString& summary, const QString& result = QString());
 
     QString dataRoot_;
     dawn::core::SettingsService settingsService_;
@@ -170,6 +178,16 @@ private:
     std::vector<dawn::core::ContentVersion> contentVersions_;
     std::vector<dawn::core::InstallDiagnostic> installDiagnostics_;
     std::vector<dawn::core::ContentInstallResult::RollbackEvent> rollbackEvents_;
+    struct InstallLogEntry {
+        QString time;
+        QString type;
+        QString targetInstanceId;
+        QString result;
+        QString summary;
+        bool success = false;
+    };
+    std::vector<InstallLogEntry> installLogs_;
+    QString installLogFilter_ = QStringLiteral("all");
     std::vector<std::string> repairExecutionLogs_;
     QVariantMap lastDroppedFileResult_;
     dawn::core::DependencyCheckResult installPreview_;

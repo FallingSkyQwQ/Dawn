@@ -43,6 +43,7 @@ struct LocalPackageAnalysis {
     bool archive = false;
     double confidence = 0.0;
     std::vector<std::string> reasons;
+    std::vector<std::string> archiveEntries;
 };
 
 class LocalPackageService {

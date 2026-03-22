@@ -132,6 +132,14 @@ Item {
                             }
 
                             Text {
+                                visible: (appViewModel.lastDroppedFileResult.failureReason || "").length > 0
+                                text: "Reason: " + appViewModel.lastDroppedFileResult.failureReason
+                                color: "#f2c5ba"
+                                font.pixelSize: 12
+                                wrapMode: Text.WordWrap
+                            }
+
+                            Text {
                                 visible: (appViewModel.lastDroppedFileResult.reasons || []).length > 0
                                 text: "Reasons: " + (appViewModel.lastDroppedFileResult.reasons || []).join("  |  ")
                                 color: "#92a3ba"
@@ -143,6 +151,73 @@ Item {
                                 text: "Target: " + (appViewModel.lastDroppedFileResult.targetInstanceId || appViewModel.activeInstanceId || "none")
                                 color: "#92a3ba"
                                 font.pixelSize: 11
+                            }
+                        }
+                    }
+                }
+            }
+
+            DawnCard {
+                Layout.fillWidth: true
+                Layout.preferredHeight: 280
+                title: "Installation Logs"
+                subtitle: "Recent drag installs and repair runs with status filtering."
+
+                Column {
+                    anchors.fill: parent
+                    spacing: 10
+
+                    RowLayout {
+                        width: parent.width
+
+                        Text {
+                            text: "Filter"
+                            color: "#8ea0b7"
+                            font.pixelSize: 11
+                        }
+
+                        ComboBox {
+                            Layout.preferredWidth: 160
+                            model: [
+                                { "label": "All", "value": "all" },
+                                { "label": "Success", "value": "success" },
+                                { "label": "Failure", "value": "failure" }
+                            ]
+                            textRole: "label"
+                            valueRole: "value"
+                            currentIndex: appViewModel.installLogFilter === "success" ? 1 : (appViewModel.installLogFilter === "failure" ? 2 : 0)
+                            onActivated: appViewModel.setInstallLogFilter(currentValue)
+                        }
+
+                        Item { Layout.fillWidth: true }
+
+                        Text {
+                            text: appViewModel.installLogs.length + " entries"
+                            color: "#8ea0b7"
+                            font.pixelSize: 11
+                        }
+                    }
+
+                    ListView {
+                        width: parent.width
+                        height: 190
+                        clip: true
+                        spacing: 8
+                        model: appViewModel.installLogs
+
+                        delegate: Rectangle {
+                            width: ListView.view.width
+                            height: 70
+                            radius: 12
+                            color: modelData.success ? Qt.rgba(0.14, 0.24, 0.18, 0.95) : Qt.rgba(0.28, 0.17, 0.16, 0.95)
+                            border.color: Qt.rgba(1, 1, 1, 0.05)
+
+                            Column {
+                                anchors.fill: parent
+                                anchors.margins: 10
+                                spacing: 3
+                                Text { text: modelData.time + "  |  " + modelData.type + "  |  " + modelData.result; color: "#f5f8fb"; font.pixelSize: 12; font.bold: true }
+                                Text { text: "Target: " + modelData.targetInstanceId + "  |  " + modelData.summary; color: "#dce5f0"; font.pixelSize: 11; wrapMode: Text.WordWrap }
                             }
                         }
                     }

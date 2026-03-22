@@ -287,5 +287,22 @@ TEST(AppViewModel, HandleDroppedFileInstallsLocalModAndExposesResult) {
     EXPECT_EQ(lastResult.value("targetInstanceId").toString(), QString::fromStdString(instance.id));
     EXPECT_EQ(lastResult.value("status").toString(), QStringLiteral("succeeded"));
 
+    const auto installLogs = viewModel.installLogs();
+    ASSERT_EQ(installLogs.size(), 1);
+    EXPECT_EQ(installLogs.front().toMap().value("type").toString(), QStringLiteral("drag-install"));
+    EXPECT_EQ(installLogs.front().toMap().value("result").toString(), QStringLiteral("succeeded"));
+    EXPECT_EQ(installLogs.front().toMap().value("targetInstanceId").toString(), QString::fromStdString(instance.id));
+
+    EXPECT_FALSE(viewModel.executeRepairPlan(QStringLiteral("missing")));
+    EXPECT_EQ(viewModel.installLogs().size(), 2);
+
+    viewModel.setInstallLogFilter(QStringLiteral("success"));
+    EXPECT_EQ(viewModel.installLogs().size(), 1);
+    EXPECT_TRUE(viewModel.installLogs().front().toMap().value("success").toBool());
+
+    viewModel.setInstallLogFilter(QStringLiteral("failure"));
+    EXPECT_EQ(viewModel.installLogs().size(), 1);
+    EXPECT_FALSE(viewModel.installLogs().front().toMap().value("success").toBool());
+
     std::filesystem::remove_all(root);
 }
