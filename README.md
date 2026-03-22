@@ -75,7 +75,7 @@ The code is layered so that the core library can be tested without Qt.
 | Java | scaffolded | Runtime discovery and profile stubs are present. |
 | Minecraft versions | scaffolded | Version classification and lookup are local stubs. |
 | Loaders | scaffolded | Fabric, Quilt, Forge, NeoForge, and OptiFine profiles are represented. |
-| Download queue | scaffolded | Task queue and update simulation are present, not network-backed. |
+| Download queue | executable scaffold | Task queue, retrying file download, and checksum verification skeletons are present. |
 | Diagnostics | scaffolded | Log rule matching returns human-readable categories. |
 | Backups | scaffolded | Snapshot metadata and restore plans are local stubs. |
 | Modrinth integration | protocol-adapter | Search/version URL builders and JSON parsing are wired; Windows uses WinHTTP, other platforms use fake transport. |
@@ -86,5 +86,6 @@ The code is layered so that the core library can be tested without Qt.
 ## Known Gaps
 
 * Windows has a real WinHTTP transport; other platforms fall back to fake transport by default.
-* Real Minecraft runtime orchestration and actual file download pipelines are intentionally stubbed.
+* Real Minecraft runtime orchestration is still stubbed.
 * FluentUIbi integration is behind a CMake switch and falls back when the submodule is not present.
+* Download executor status: executable scaffold only; resume support, parallel transfer, and deeper corruption recovery are still pending.

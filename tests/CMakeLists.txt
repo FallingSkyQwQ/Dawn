@@ -8,6 +8,7 @@ if(GTest_FOUND)
             account_token_state_test.cpp
             backup_service_test.cpp
             diagnostics_service_test.cpp
+            download_service_test.cpp
             global_settings_test.cpp
             instance_manifest_test.cpp
             http_client_factory_test.cpp

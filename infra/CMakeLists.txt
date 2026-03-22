@@ -3,6 +3,7 @@ add_library(dawn_infra STATIC)
 target_sources(dawn_infra
     PRIVATE
         src/fs/file_system.cpp
+        src/hash/sha256.cpp
         src/json/simple_json.cpp
         src/net/http_client_factory.cpp
 )

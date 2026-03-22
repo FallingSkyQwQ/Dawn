@@ -57,6 +57,30 @@ bool write_text_file(const std::filesystem::path& path, const std::string& text,
     return true;
 }
 
+bool write_binary_file(const std::filesystem::path& path, const std::string& data, std::string* error) {
+    if (!ensure_parent_directory(path, error)) {
+        return false;
+    }
+
+    std::ofstream stream(path, std::ios::binary | std::ios::trunc);
+    if (!stream.is_open()) {
+        if (error) {
+            *error = "failed to open file for writing: " + path.string();
+        }
+        return false;
+    }
+
+    stream.write(data.data(), static_cast<std::streamsize>(data.size()));
+    if (!stream.good()) {
+        if (error) {
+            *error = "failed to write file: " + path.string();
+        }
+        return false;
+    }
+
+    return true;
+}
+
 bool read_text_file(const std::filesystem::path& path, std::string* text, std::string* error) {
     std::ifstream stream(path, std::ios::binary);
     if (!stream.is_open()) {
