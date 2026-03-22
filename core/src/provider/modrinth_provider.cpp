@@ -54,6 +54,29 @@ std::vector<std::string> read_string_array(const Value* value) {
     return result;
 }
 
+DependencyRequirement dependency_requirement_from_string(const std::string& text) {
+    if (text == "optional") {
+        return DependencyRequirement::Optional;
+    }
+    if (text == "incompatible") {
+        return DependencyRequirement::Incompatible;
+    }
+    if (text == "embedded") {
+        return DependencyRequirement::Embedded;
+    }
+    return DependencyRequirement::Required;
+}
+
+std::string dependency_requirement_to_string(DependencyRequirement requirement) {
+    switch (requirement) {
+    case DependencyRequirement::Required: return "required";
+    case DependencyRequirement::Optional: return "optional";
+    case DependencyRequirement::Incompatible: return "incompatible";
+    case DependencyRequirement::Embedded: return "embedded";
+    }
+    return "required";
+}
+
 bool read_string(const Value::Object& object, const std::string& key, std::string* out) {
     const auto* value = dawn::infra::json::find(object, key);
     if (!value || !value->is_string()) {
@@ -147,7 +170,11 @@ std::vector<ContentVersion> fallback_versions(const std::string& projectId) {
     version.versionId = projectId + "-v1";
     version.name = "Local stub build";
     version.fileUrls = {"https://example.invalid/" + projectId + ".jar"};
-    version.dependencies = {"dawn-core"};
+    version.dependencies = {
+        {"dawn-core", {}, {}, DependencyRequirement::Required, "runtime core dependency"},
+        {"ui-helper", {}, {}, DependencyRequirement::Optional, "visual helper pack"},
+        {"legacy-loader", {}, {}, DependencyRequirement::Incompatible, "known loader conflict"},
+    };
     version.gameVersions = {"1.20.1"};
     version.loaders = {LoaderType::Fabric, LoaderType::Forge};
     return {std::move(version)};
@@ -250,10 +277,24 @@ ContentVersion parse_version_entry(const Value::Object& object) {
                 continue;
             }
             const auto& dependencyObject = dependency.as_object();
+            ContentDependency item;
             if (const auto* entry = dawn::infra::json::find(dependencyObject, "version_id"); entry && entry->is_string()) {
-                version.dependencies.push_back(entry->as_string());
-            } else if (const auto* entry = dawn::infra::json::find(dependencyObject, "project_id"); entry && entry->is_string()) {
-                version.dependencies.push_back(entry->as_string());
+                item.versionId = entry->as_string();
+            }
+            if (const auto* entry = dawn::infra::json::find(dependencyObject, "project_id"); entry && entry->is_string()) {
+                item.projectId = entry->as_string();
+            }
+            if (const auto* entry = dawn::infra::json::find(dependencyObject, "file_name"); entry && entry->is_string()) {
+                item.fileName = entry->as_string();
+            }
+            if (const auto* entry = dawn::infra::json::find(dependencyObject, "dependency_type"); entry && entry->is_string()) {
+                item.requirement = dependency_requirement_from_string(entry->as_string());
+            }
+            if (const auto* entry = dawn::infra::json::find(dependencyObject, "note"); entry && entry->is_string()) {
+                item.note = entry->as_string();
+            }
+            if (!item.projectId.empty() || !item.versionId.empty()) {
+                version.dependencies.push_back(std::move(item));
             }
         }
     }
@@ -410,16 +451,34 @@ std::vector<ContentVersion> ModrinthProvider::versions(const std::string& projec
 
 DependencyGraph ModrinthProvider::resolveDependencies(const InstallRequest& request) {
     DependencyGraph graph;
-    ContentLock lock;
-    lock.provider = "modrinth";
-    lock.projectId = request.projectId;
-    lock.versionId = request.versionId;
-    lock.fileHash = "stub-hash";
-    lock.installedPath = std::filesystem::path("mods") / (request.projectId + ".jar");
-    lock.enabled = true;
-    lock.dependencies = {"minecraft"};
-    graph.locks.push_back(std::move(lock));
-    graph.missing.push_back("java");
+    const auto versions = this->versions(request.projectId);
+    const auto selected = std::find_if(versions.begin(), versions.end(), [&](const ContentVersion& version) {
+        return request.versionId.empty() || version.versionId == request.versionId;
+    });
+    if (selected == versions.end()) {
+        graph.conflicts.push_back("version not found");
+        return graph;
+    }
+
+    graph.dependencies = selected->dependencies;
+    for (const auto& dependency : selected->dependencies) {
+        switch (dependency.requirement) {
+        case DependencyRequirement::Required:
+            graph.missing.push_back(dependency.projectId);
+            break;
+        case DependencyRequirement::Optional:
+        case DependencyRequirement::Embedded:
+            graph.optional.push_back(dependency.projectId);
+            break;
+        case DependencyRequirement::Incompatible:
+            graph.conflicts.push_back(dependency.projectId);
+            break;
+        }
+    }
+
+    if (request.projectType == ProjectType::Modpack) {
+        graph.conflicts.push_back("modpack requires instance creation");
+    }
     return graph;
 }
 

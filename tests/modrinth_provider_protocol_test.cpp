@@ -2,6 +2,7 @@
 
 #include <gtest/gtest.h>
 
+#include <algorithm>
 #include <memory>
 
 using namespace dawn::core;
@@ -74,7 +75,9 @@ TEST(ModrinthProviderProtocol, BuildsVersionsUrlAndParsesVersions) {
                     {"url": "https://example.invalid/mod.jar"}
                 ],
                 "dependencies": [
-                    {"version_id": "dep-v1"}
+                    {"project_id": "dep-required", "version_id": "dep-v1", "dependency_type": "required"},
+                    {"project_id": "dep-optional", "dependency_type": "optional"},
+                    {"project_id": "dep-incompatible", "dependency_type": "incompatible"}
                 ]
             }
         ])"
@@ -99,7 +102,42 @@ TEST(ModrinthProviderProtocol, BuildsVersionsUrlAndParsesVersions) {
     EXPECT_EQ(versions.front().versionId, "v1");
     EXPECT_EQ(versions.front().name, "1.0.0");
     EXPECT_EQ(versions.front().fileUrls.front(), "https://example.invalid/mod.jar");
-    EXPECT_EQ(versions.front().dependencies.front(), "dep-v1");
+    ASSERT_EQ(versions.front().dependencies.size(), 3u);
+    EXPECT_EQ(versions.front().dependencies.front().projectId, "dep-required");
+    EXPECT_EQ(versions.front().dependencies.front().versionId, "dep-v1");
+    EXPECT_EQ(versions.front().dependencies.front().requirement, DependencyRequirement::Required);
+    EXPECT_EQ(versions.front().dependencies[1].requirement, DependencyRequirement::Optional);
+    EXPECT_EQ(versions.front().dependencies[2].requirement, DependencyRequirement::Incompatible);
     EXPECT_EQ(versions.front().loaders.front(), LoaderType::Fabric);
 }
 
+TEST(ModrinthProviderProtocol, ResolvesDependencySummaryFromVersionMetadata) {
+    auto client = std::make_shared<dawn::infra::net::FakeHttpClient>();
+    client->push_response(dawn::infra::net::HttpResponse{
+        200,
+        {},
+        R"([
+            {
+                "id": "v1",
+                "version_number": "1.0.0",
+                "loaders": ["forge"],
+                "dependencies": [
+                    {"project_id": "dep-required", "dependency_type": "required"},
+                    {"project_id": "dep-optional", "dependency_type": "optional"},
+                    {"project_id": "dep-incompatible", "dependency_type": "incompatible"}
+                ]
+            }
+        ])"
+    });
+
+    ModrinthProvider provider(client);
+    InstallRequest request;
+    request.projectId = "project";
+    request.versionId = "v1";
+
+    const auto graph = provider.resolveDependencies(request);
+    EXPECT_EQ(graph.dependencies.size(), 3u);
+    EXPECT_NE(std::find(graph.missing.begin(), graph.missing.end(), "dep-required"), graph.missing.end());
+    EXPECT_NE(std::find(graph.optional.begin(), graph.optional.end(), "dep-optional"), graph.optional.end());
+    EXPECT_NE(std::find(graph.conflicts.begin(), graph.conflicts.end(), "dep-incompatible"), graph.conflicts.end());
+}

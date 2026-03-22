@@ -1,9 +1,11 @@
 #include "app_view_model.h"
 
 #include "dawn/core/model/instance_workbench.h"
+#include "dawn/infra/net/http_client.h"
 
 #include <algorithm>
 #include <filesystem>
+#include <memory>
 #include <system_error>
 #include <utility>
 
@@ -27,6 +29,52 @@ QString loader_text(dawn::core::LoaderType loader) {
     return to_qstring(std::string(dawn::core::to_string(loader)));
 }
 
+class DemoPreviewProvider final : public dawn::core::IContentProvider {
+public:
+    DemoPreviewProvider() {
+        dawn::core::ContentVersion version;
+        version.versionId = "1.0.0";
+        version.name = "Demo Content";
+        version.fileUrls = {"https://example.invalid/demo-content.jar"};
+        version.loaders = {dawn::core::LoaderType::Forge};
+        version.dependencies = {
+            {"required-lib", {}, {}, dawn::core::DependencyRequirement::Required, "required for rendering"},
+            {"optional-lib", {}, {}, dawn::core::DependencyRequirement::Optional, "optional enhancement"},
+            {"bad-lib", {}, {}, dawn::core::DependencyRequirement::Incompatible, "known conflict"},
+        };
+        versions_.push_back(version);
+        dependencyGraph_.dependencies = version.dependencies;
+    }
+
+    dawn::core::SearchResult search(const dawn::core::SearchQuery&) override {
+        return {};
+    }
+
+    std::vector<dawn::core::ContentVersion> versions(const std::string&) override {
+        return versions_;
+    }
+
+    dawn::core::DependencyGraph resolveDependencies(const dawn::core::InstallRequest&) override {
+        return dependencyGraph_;
+    }
+
+    dawn::core::TaskPlan buildInstallPlan(const dawn::core::InstallRequest& request) override {
+        dawn::core::TaskPlan plan;
+        plan.id = "preview-" + request.projectId;
+        plan.title = "Preview " + request.projectId;
+        plan.steps = {
+            {"resolve", "Resolve", dawn::core::TaskStatus::Pending, 0, {}},
+            {"download", "Download", dawn::core::TaskStatus::Pending, 0, {}},
+            {"deploy", "Deploy", dawn::core::TaskStatus::Pending, 0, {}},
+        };
+        return plan;
+    }
+
+private:
+    std::vector<dawn::core::ContentVersion> versions_;
+    dawn::core::DependencyGraph dependencyGraph_;
+};
+
 QVariantList workbench_tabs_to_variant(const dawn::core::InstanceWorkbenchState& workbench) {
     QVariantList tabs;
     for (const auto& tab : workbench.tabs) {
@@ -46,6 +94,8 @@ AppViewModel::AppViewModel(QString dataRoot, QObject* parent)
     : QObject(parent)
     , dataRoot_(std::move(dataRoot))
     , instanceService_(std::filesystem::path(dataRoot_.toStdString()))
+    , previewDownloadService_(std::make_shared<dawn::infra::net::FakeHttpClient>())
+    , contentInstallService_(std::filesystem::path(dataRoot_.toStdString()), previewDownloadService_)
 {
     refresh();
 }
@@ -97,6 +147,26 @@ QVariantMap AppViewModel::primaryPreflight() const {
         };
     }
     return preflightToVariant(preflightService_.inspect(instances_.front()));
+}
+
+QVariantList AppViewModel::installDiagnostics() const {
+    QVariantList diagnostics;
+    for (const auto& diagnostic : installDiagnostics_) {
+        diagnostics.push_back(diagnosticToVariant(diagnostic));
+    }
+    return diagnostics;
+}
+
+QVariantList AppViewModel::rollbackEvents() const {
+    QVariantList events;
+    for (const auto& event : rollbackEvents_) {
+        events.push_back(rollbackEventToVariant(event));
+    }
+    return events;
+}
+
+QString AppViewModel::installPreviewStatus() const {
+    return installPreviewStatus_;
 }
 
 QString AppViewModel::primaryInstanceId() const {
@@ -160,6 +230,39 @@ bool AppViewModel::enqueueDemoTask(const QString& title) {
     return true;
 }
 
+void AppViewModel::refreshInstallPreview() {
+    installDiagnostics_.clear();
+    rollbackEvents_.clear();
+    installPreviewStatus_ = QStringLiteral("No install preview available");
+
+    const auto instanceId = activeInstanceId();
+    if (instanceId.isEmpty()) {
+        installPreviewStatus_ = QStringLiteral("Create or select an instance to preview installs");
+        emit dataChanged();
+        return;
+    }
+
+    DemoPreviewProvider provider;
+    dawn::core::InstallRequest request;
+    request.provider = "modrinth";
+    request.instanceId = to_std(instanceId);
+    request.projectId = "demo-content";
+    request.versionId = "1.0.0";
+    request.projectType = dawn::core::ProjectType::Mod;
+
+    const auto result = contentInstallService_.install(request, provider, nullptr);
+    for (const auto& diagnostic : result.diagnostics) {
+        installDiagnostics_.push_back(diagnostic);
+    }
+    for (const auto& event : result.rollbackEvents) {
+        rollbackEvents_.push_back(event);
+    }
+    installPreviewStatus_ = result.success
+        ? QStringLiteral("Install preview succeeded")
+        : QString::fromStdString(result.message.empty() ? "Install preview blocked" : result.message);
+    emit dataChanged();
+}
+
 QVariantMap AppViewModel::preflightFor(const QString& instanceId) const {
     const auto manifest = instanceService_.load_instance(to_std(instanceId));
     if (!manifest) {
@@ -190,6 +293,7 @@ void AppViewModel::setActiveInstance(const QString& instanceId) {
     }
     activeInstanceId_ = instanceId;
     activeInstanceTabId_ = QStringLiteral("overview");
+    refreshInstallPreview();
     emit dataChanged();
 }
 
@@ -210,6 +314,7 @@ void AppViewModel::refresh() {
         activeInstanceId_ = to_qstring(instances_.front().id);
         activeInstanceTabId_ = QStringLiteral("overview");
     }
+    refreshInstallPreview();
     emit dataChanged();
 }
 
@@ -275,6 +380,26 @@ QVariantMap AppViewModel::workbenchToVariant(const dawn::core::InstanceWorkbench
         {"instanceName", to_qstring(workbench.instanceName)},
         {"selectedTabId", activeInstanceTabId_},
         {"tabs", workbench_tabs_to_variant(workbench)},
+    };
+}
+
+QVariantMap AppViewModel::diagnosticToVariant(const dawn::core::InstallDiagnostic& diagnostic) const {
+    return QVariantMap{
+        {"code", to_qstring(diagnostic.code)},
+        {"severity", to_qstring(std::string(dawn::core::to_string(diagnostic.severity)))},
+        {"message", to_qstring(diagnostic.message)},
+        {"suggestion", to_qstring(diagnostic.suggestion)},
+        {"blocker", diagnostic.blocker},
+    };
+}
+
+QVariantMap AppViewModel::rollbackEventToVariant(const dawn::core::ContentInstallResult::RollbackEvent& event) const {
+    return QVariantMap{
+        {"step", to_qstring(event.step)},
+        {"action", to_qstring(event.action)},
+        {"target", to_qstring(event.target)},
+        {"status", to_qstring(event.status)},
+        {"message", to_qstring(event.message)},
     };
 }
 

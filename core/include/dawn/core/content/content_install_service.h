@@ -33,6 +33,8 @@ struct ContentInstallResult {
     std::filesystem::path lockPath;
     ContentLock lock;
     DownloadResult downloadResult;
+    DependencyCheckResult dependencyCheck;
+    std::vector<InstallDiagnostic> diagnostics;
     TaskPlan plan;
     TaskResult taskResult;
     std::vector<std::string> logs;
@@ -55,6 +57,7 @@ public:
     [[nodiscard]] const std::filesystem::path& root() const noexcept;
 
     TaskPlan build_install_plan(const InstallRequest& request) const;
+    DependencyCheckResult preview(const InstallRequest& request, IContentProvider& provider) const;
     ContentInstallResult install(const InstallRequest& request, IContentProvider& provider, TaskQueue* queue = nullptr) const;
 
     static std::filesystem::path deployment_directory_for(ProjectType type, const InstanceManifest& instance);

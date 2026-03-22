@@ -60,6 +60,40 @@ std::string extension_for_project(ProjectType type) {
     return ".bin";
 }
 
+bool contains_loader(const std::vector<LoaderType>& loaders, LoaderType loader) {
+    return std::find(loaders.begin(), loaders.end(), loader) != loaders.end();
+}
+
+std::vector<ContentLock> collect_installed_locks(const InstanceManifest& instance) {
+    std::vector<ContentLock> locks;
+    const std::filesystem::path gameDir = instance.gameDir.empty()
+        ? (std::filesystem::path(instance.id.empty() ? "instance" : instance.id) / "game")
+        : std::filesystem::path(instance.gameDir);
+    const auto root = gameDir / "config" / "dawn" / "content-locks";
+
+    std::error_code ec;
+    if (!std::filesystem::exists(root, ec)) {
+        return locks;
+    }
+
+    for (const auto& providerDir : std::filesystem::directory_iterator(root, ec)) {
+        if (ec) {
+            break;
+        }
+        if (!providerDir.is_directory()) {
+            continue;
+        }
+        for (const auto& path : dawn::infra::fs::list_files(providerDir.path(), ".json")) {
+            ContentLock lock;
+            std::string error;
+            if (load_content_lock(path, &lock, &error)) {
+                locks.push_back(std::move(lock));
+            }
+        }
+    }
+    return locks;
+}
+
 std::string filename_from_url(const std::string& url) {
     const auto cut = url.find_first_of("?#");
     const auto clean = cut == std::string::npos ? url : url.substr(0, cut);
@@ -234,7 +268,13 @@ std::filesystem::path ContentInstallService::final_path_for(const InstanceManife
 }
 
 std::vector<std::string> ContentInstallService::merge_dependencies(const ContentVersion& version, const DependencyGraph& graph) {
-    std::vector<std::string> dependencies = version.dependencies;
+    std::vector<std::string> dependencies;
+    for (const auto& dependency : version.dependencies) {
+        append_unique(dependencies, dependency.projectId);
+    }
+    for (const auto& dependency : graph.dependencies) {
+        append_unique(dependencies, dependency.projectId);
+    }
     for (const auto& lock : graph.locks) {
         for (const auto& dependency : lock.dependencies) {
             append_unique(dependencies, dependency);
@@ -245,6 +285,144 @@ std::vector<std::string> ContentInstallService::merge_dependencies(const Content
 
 std::string ContentInstallService::provider_name(const InstallRequest& request) {
     return request.provider.empty() ? std::string("modrinth") : request.provider;
+}
+
+DependencyCheckResult ContentInstallService::preview(const InstallRequest& request, IContentProvider& provider) const {
+    DependencyCheckResult result;
+
+    std::string instanceError;
+    auto instance = load_instance(request.instanceId, &instanceError);
+    if (!instance) {
+        result.blocked = true;
+        result.graph.conflicts.push_back("instance not found");
+        result.diagnostics.push_back({
+            "missing_instance",
+            PreflightSeverity::Error,
+            instanceError.empty() ? "instance not found" : instanceError,
+            "select a valid instance",
+            true,
+        });
+        return result;
+    }
+
+    const auto versions = provider.versions(request.projectId);
+    const auto selected = std::find_if(versions.begin(), versions.end(), [&](const ContentVersion& version) {
+        return request.versionId.empty() || version.versionId == request.versionId;
+    });
+    if (selected == versions.end()) {
+        result.blocked = true;
+        result.graph.conflicts.push_back("version not found");
+        result.diagnostics.push_back({
+            "missing_version",
+            PreflightSeverity::Error,
+            "requested version not found",
+            "pick another version",
+            true,
+        });
+        return result;
+    }
+
+    result.graph = provider.resolveDependencies(request);
+    if (result.graph.dependencies.empty() && !selected->dependencies.empty()) {
+        result.graph.dependencies = selected->dependencies;
+    }
+
+    const auto installedLocks = collect_installed_locks(*instance);
+    const bool loaderSupported = selected->loaders.empty() || instance->loaderType == LoaderType::None || contains_loader(selected->loaders, instance->loaderType);
+    if (!loaderSupported) {
+        result.blocked = true;
+        result.graph.conflicts.push_back("loader:" + std::string(to_string(instance->loaderType)));
+        result.diagnostics.push_back({
+            "loader_incompatible",
+            PreflightSeverity::Error,
+            "selected version is not compatible with the instance loader",
+            "choose a build that supports " + std::string(to_string(instance->loaderType)),
+            true,
+        });
+    }
+
+    auto is_installed = [&](const std::string& projectId, std::string* installedVersion = nullptr) {
+        for (const auto& lock : installedLocks) {
+            if (lock.projectId == projectId) {
+                if (installedVersion) {
+                    *installedVersion = lock.versionId;
+                }
+                return true;
+            }
+        }
+        return false;
+    };
+
+    for (const auto& dependency : result.graph.dependencies) {
+        std::string installedVersion;
+        const bool installed = is_installed(dependency.projectId, &installedVersion);
+        switch (dependency.requirement) {
+        case DependencyRequirement::Required:
+            if (!installed) {
+                result.blocked = true;
+                result.graph.missing.push_back(dependency.projectId);
+                result.diagnostics.push_back({
+                    "missing_required_dependency",
+                    PreflightSeverity::Error,
+                    "required dependency missing: " + dependency.projectId,
+                    "install " + dependency.projectId + " before continuing",
+                    true,
+                });
+            }
+            break;
+        case DependencyRequirement::Optional:
+        case DependencyRequirement::Embedded:
+            if (!installed) {
+                result.graph.optional.push_back(dependency.projectId);
+                result.diagnostics.push_back({
+                    "optional_dependency_missing",
+                    PreflightSeverity::Info,
+                    "optional dependency not installed: " + dependency.projectId,
+                    "install later if a feature requires it",
+                    false,
+                });
+            }
+            break;
+        case DependencyRequirement::Incompatible:
+            if (installed) {
+                result.blocked = true;
+                result.graph.conflicts.push_back(dependency.projectId);
+                result.diagnostics.push_back({
+                    "incompatible_dependency",
+                    PreflightSeverity::Error,
+                    "incompatible dependency already installed: " + dependency.projectId,
+                    "remove the conflicting project before installing this version",
+                    true,
+                });
+            }
+            break;
+        }
+    }
+
+    for (const auto& lock : installedLocks) {
+        if (lock.projectId == request.projectId && lock.versionId != selected->versionId) {
+            result.blocked = true;
+            result.graph.conflicts.push_back(lock.projectId + "@" + lock.versionId);
+            result.diagnostics.push_back({
+                "project_version_conflict",
+                PreflightSeverity::Error,
+                "another version of the same project is already installed: " + lock.versionId,
+                "remove the previous version or install into a fresh instance",
+                true,
+            });
+        }
+    }
+
+    if (result.diagnostics.empty()) {
+        result.diagnostics.push_back({
+            "install_preview_ok",
+            PreflightSeverity::Info,
+            "dependency graph looks consistent",
+            "proceed with installation",
+            false,
+        });
+    }
+    return result;
 }
 
 ContentInstallResult ContentInstallService::install(const InstallRequest& request, IContentProvider& provider, TaskQueue* queue) const {
@@ -284,11 +462,33 @@ ContentInstallResult ContentInstallService::install(const InstallRequest& reques
         queue->start(result.queuedTaskId);
     }
 
+    const auto dependencyCheck = preview(request, provider);
+    result.dependencyCheck = dependencyCheck;
+    result.diagnostics = dependencyCheck.diagnostics;
+    result.missingDependencies = dependencyCheck.graph.missing;
+    result.conflicts = dependencyCheck.graph.conflicts;
+    for (const auto& missing : result.missingDependencies) {
+        result.logs.push_back("missing dependency: " + missing);
+    }
+    for (const auto& conflict : result.conflicts) {
+        result.logs.push_back("conflict: " + conflict);
+    }
+
+    if (dependencyCheck.blocked) {
+        result.message = dependencyCheck.diagnostics.empty()
+            ? "dependency check blocked installation"
+            : dependencyCheck.diagnostics.front().message;
+        fail_result(&result, &pipeline, queue, "resolve", result.message);
+        add_rollback_event(&result, "resolve", "abort install", std::filesystem::path(request.projectId), "blocked", result.message);
+        return result;
+    }
+
     std::string instanceError;
     auto instance = load_instance(request.instanceId, &instanceError);
     if (!instance) {
         result.message = instanceError.empty() ? "instance not found" : instanceError;
         fail_result(&result, &pipeline, queue, "resolve", result.message);
+        add_rollback_event(&result, "resolve", "abort install", std::filesystem::path(request.projectId), "blocked", result.message);
         return result;
     }
 
@@ -296,6 +496,7 @@ ContentInstallResult ContentInstallService::install(const InstallRequest& reques
     if (versions.empty()) {
         result.message = "no versions available for project";
         fail_result(&result, &pipeline, queue, "resolve", result.message);
+        add_rollback_event(&result, "resolve", "abort install", std::filesystem::path(request.projectId), "blocked", result.message);
         return result;
     }
 
@@ -305,17 +506,8 @@ ContentInstallResult ContentInstallService::install(const InstallRequest& reques
     if (selected == versions.end()) {
         result.message = "requested version not found";
         fail_result(&result, &pipeline, queue, "resolve", result.message);
+        add_rollback_event(&result, "resolve", "abort install", std::filesystem::path(request.projectId), "blocked", result.message);
         return result;
-    }
-
-    auto dependencyGraph = provider.resolveDependencies(request);
-    result.missingDependencies = dependencyGraph.missing;
-    result.conflicts = dependencyGraph.conflicts;
-    for (const auto& missing : result.missingDependencies) {
-        result.logs.push_back("missing dependency: " + missing);
-    }
-    for (const auto& conflict : result.conflicts) {
-        result.logs.push_back("conflict: " + conflict);
     }
 
     pipeline.advance_step("resolve", TaskStatus::Succeeded, "version resolved");
@@ -392,7 +584,7 @@ ContentInstallResult ContentInstallService::install(const InstallRequest& reques
     result.lock.fileHash = result.downloadResult.artifact.checksum;
     result.lock.installedPath = finalPath;
     result.lock.enabled = true;
-    result.lock.dependencies = merge_dependencies(*selected, dependencyGraph);
+    result.lock.dependencies = merge_dependencies(*selected, dependencyCheck.graph);
 
     result.lockPath = lock_path_for(request, *instance);
     if (!write_text_file(result.lockPath, content_lock_to_text(result.lock), &deployError)) {

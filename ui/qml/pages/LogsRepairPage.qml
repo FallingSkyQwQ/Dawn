@@ -44,6 +44,41 @@ Item {
 
             DawnCard {
                 Layout.fillWidth: true
+                Layout.preferredHeight: 180
+                title: "Install Preview"
+                subtitle: appViewModel.installPreviewStatus
+
+                Column {
+                    anchors.fill: parent
+                    spacing: 8
+
+                    RowLayout {
+                        width: parent.width
+
+                        Text {
+                            text: "Preview diagnostics and rollback events are populated from the core install pipeline."
+                            color: "#dce5f0"
+                            font.pixelSize: 13
+                            wrapMode: Text.WordWrap
+                            Layout.fillWidth: true
+                        }
+
+                        Button {
+                            text: "Refresh Preview"
+                            onClicked: appViewModel.refreshInstallPreview()
+                        }
+                    }
+
+                    Text {
+                        text: appViewModel.installDiagnostics.length > 0 ? ("Diagnostics: " + appViewModel.installDiagnostics.length) : "No install diagnostics available yet."
+                        color: "#8ea0b7"
+                        font.pixelSize: 12
+                    }
+                }
+            }
+
+            DawnCard {
+                Layout.fillWidth: true
                 Layout.preferredHeight: 360
                 title: "Primary Preflight"
                 subtitle: appViewModel.primaryInstanceId.length > 0 ? "Instance: " + appViewModel.primaryInstanceId : "No instance selected"
@@ -88,6 +123,72 @@ Item {
                                     Text { text: modelData.message; color: "#dce5f0"; font.pixelSize: 12 }
                                     Text { text: modelData.suggestion; color: "#8ea0b7"; font.pixelSize: 12 }
                                 }
+                            }
+                        }
+                    }
+                }
+            }
+
+            DawnCard {
+                Layout.fillWidth: true
+                Layout.preferredHeight: 360
+                title: "Install Diagnostics"
+                subtitle: "Structured dependency checks and conflict reasons."
+
+                Column {
+                    anchors.fill: parent
+                    spacing: 10
+
+                    Repeater {
+                        model: appViewModel.installDiagnostics
+
+                        delegate: Rectangle {
+                            width: parent.width
+                            height: 82
+                            radius: 14
+                            color: Qt.rgba(1, 1, 1, 0.03)
+                            border.color: Qt.rgba(1, 1, 1, 0.05)
+
+                            Column {
+                                anchors.fill: parent
+                                anchors.margins: 12
+                                spacing: 4
+                                Text { text: modelData.severity.toUpperCase() + "  |  " + modelData.code; color: "#f5f8fb"; font.pixelSize: 14; font.bold: true }
+                                Text { text: modelData.message; color: "#dce5f0"; font.pixelSize: 12; wrapMode: Text.WordWrap }
+                                Text { text: modelData.suggestion; color: "#8ea0b7"; font.pixelSize: 12; wrapMode: Text.WordWrap }
+                            }
+                        }
+                    }
+                }
+            }
+
+            DawnCard {
+                Layout.fillWidth: true
+                Layout.preferredHeight: 360
+                title: "Rollback Events"
+                subtitle: "Structured cleanup steps emitted when install checks fail."
+
+                Column {
+                    anchors.fill: parent
+                    spacing: 10
+
+                    Repeater {
+                        model: appViewModel.rollbackEvents
+
+                        delegate: Rectangle {
+                            width: parent.width
+                            height: 84
+                            radius: 14
+                            color: Qt.rgba(1, 1, 1, 0.03)
+                            border.color: Qt.rgba(1, 1, 1, 0.05)
+
+                            Column {
+                                anchors.fill: parent
+                                anchors.margins: 12
+                                spacing: 4
+                                Text { text: modelData.step + "  |  " + modelData.action; color: "#f5f8fb"; font.pixelSize: 14; font.bold: true }
+                                Text { text: modelData.target; color: "#dce5f0"; font.pixelSize: 12; wrapMode: Text.WordWrap }
+                                Text { text: modelData.status + (modelData.message.length > 0 ? "  |  " + modelData.message : ""); color: "#8ea0b7"; font.pixelSize: 12; wrapMode: Text.WordWrap }
                             }
                         }
                     }

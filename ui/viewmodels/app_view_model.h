@@ -4,9 +4,11 @@
 #include "dawn/core/model/instance_workbench.h"
 #include "dawn/core/model/preflight.h"
 #include "dawn/core/model/task_types.h"
+#include "dawn/core/content/content_install_service.h"
 #include "dawn/core/service/instance_service.h"
 #include "dawn/core/service/preflight_service.h"
 #include "dawn/core/service/task_queue.h"
+#include "dawn/core/download/download_service.h"
 
 #include <QObject>
 #include <QString>
@@ -26,6 +28,9 @@ class AppViewModel final : public QObject {
     Q_PROPERTY(QVariantList instanceWorkbenchTabs READ instanceWorkbenchTabs NOTIFY dataChanged)
     Q_PROPERTY(QVariantMap activeInstanceWorkbench READ activeInstanceWorkbench NOTIFY dataChanged)
     Q_PROPERTY(QVariantMap primaryPreflight READ primaryPreflight NOTIFY dataChanged)
+    Q_PROPERTY(QVariantList installDiagnostics READ installDiagnostics NOTIFY dataChanged)
+    Q_PROPERTY(QVariantList rollbackEvents READ rollbackEvents NOTIFY dataChanged)
+    Q_PROPERTY(QString installPreviewStatus READ installPreviewStatus NOTIFY dataChanged)
     Q_PROPERTY(QString primaryInstanceId READ primaryInstanceId NOTIFY dataChanged)
     Q_PROPERTY(QString activeInstanceId READ activeInstanceId NOTIFY dataChanged)
     Q_PROPERTY(QString activeInstanceTabId READ activeInstanceTabId NOTIFY dataChanged)
@@ -41,6 +46,9 @@ public:
     [[nodiscard]] QVariantList instanceWorkbenchTabs() const;
     [[nodiscard]] QVariantMap activeInstanceWorkbench() const;
     [[nodiscard]] QVariantMap primaryPreflight() const;
+    [[nodiscard]] QVariantList installDiagnostics() const;
+    [[nodiscard]] QVariantList rollbackEvents() const;
+    [[nodiscard]] QString installPreviewStatus() const;
     [[nodiscard]] QString primaryInstanceId() const;
     [[nodiscard]] QString activeInstanceId() const;
     [[nodiscard]] QString activeInstanceTabId() const;
@@ -50,6 +58,7 @@ public:
 
     Q_INVOKABLE bool createInstance(const QString& name, const QString& mcVersion, const QString& loaderType = QStringLiteral("none"));
     Q_INVOKABLE bool enqueueDemoTask(const QString& title);
+    Q_INVOKABLE void refreshInstallPreview();
     Q_INVOKABLE QVariantMap preflightFor(const QString& instanceId) const;
     Q_INVOKABLE void setActiveInstance(const QString& instanceId);
     Q_INVOKABLE void setActiveInstanceTab(const QString& tabId);
@@ -63,6 +72,8 @@ private:
     [[nodiscard]] QVariantMap taskToVariant(const dawn::core::TaskPlan& plan) const;
     [[nodiscard]] QVariantMap preflightToVariant(const dawn::core::PreflightResult& result) const;
     [[nodiscard]] QVariantMap workbenchToVariant(const dawn::core::InstanceWorkbenchState& workbench) const;
+    [[nodiscard]] QVariantMap diagnosticToVariant(const dawn::core::InstallDiagnostic& diagnostic) const;
+    [[nodiscard]] QVariantMap rollbackEventToVariant(const dawn::core::ContentInstallResult::RollbackEvent& event) const;
     [[nodiscard]] std::size_t resourceCount(const dawn::core::InstanceManifest& manifest) const;
     [[nodiscard]] std::size_t activeInstanceIndex() const;
 
@@ -70,6 +81,11 @@ private:
     dawn::core::InstanceService instanceService_;
     dawn::core::PreflightService preflightService_;
     dawn::core::TaskQueue taskQueue_;
+    dawn::core::DownloadService previewDownloadService_;
+    dawn::core::ContentInstallService contentInstallService_;
+    std::vector<dawn::core::InstallDiagnostic> installDiagnostics_;
+    std::vector<dawn::core::ContentInstallResult::RollbackEvent> rollbackEvents_;
+    QString installPreviewStatus_ = QStringLiteral("No install preview run");
     std::vector<dawn::core::InstanceManifest> instances_;
     QString activeInstanceId_;
     QString activeInstanceTabId_ = QStringLiteral("overview");

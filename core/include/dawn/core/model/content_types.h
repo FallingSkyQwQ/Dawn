@@ -37,19 +37,50 @@ struct SearchResult {
     std::string nextCursor;
 };
 
+enum class DependencyRequirement {
+    Required,
+    Optional,
+    Incompatible,
+    Embedded,
+};
+
+struct ContentDependency {
+    std::string projectId;
+    std::string versionId;
+    std::string fileName;
+    DependencyRequirement requirement = DependencyRequirement::Required;
+    std::string note;
+};
+
 struct ContentVersion {
     std::string versionId;
     std::string name;
     std::vector<std::string> fileUrls;
-    std::vector<std::string> dependencies;
+    std::vector<ContentDependency> dependencies;
     std::vector<std::string> gameVersions;
     std::vector<LoaderType> loaders;
 };
 
 struct DependencyGraph {
+    std::vector<ContentDependency> dependencies;
     std::vector<ContentLock> locks;
     std::vector<std::string> missing;
+    std::vector<std::string> optional;
     std::vector<std::string> conflicts;
+};
+
+struct InstallDiagnostic {
+    std::string code;
+    PreflightSeverity severity = PreflightSeverity::Info;
+    std::string message;
+    std::string suggestion;
+    bool blocker = false;
+};
+
+struct DependencyCheckResult {
+    bool blocked = false;
+    DependencyGraph graph;
+    std::vector<InstallDiagnostic> diagnostics;
 };
 
 struct InstallRequest {
