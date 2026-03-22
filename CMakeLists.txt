@@ -27,7 +27,7 @@ if(DAWN_ENABLE_QT)
 
     set(CMAKE_AUTOMOC ON)
     set(CMAKE_AUTOUIC ON)
-    find_package(Qt6 REQUIRED COMPONENTS Core Gui Qml Quick)
+    find_package(Qt6 REQUIRED COMPONENTS Core Gui Qml Quick Multimedia)
     if(MSVC AND Qt6_DIR MATCHES "mingw")
         message(FATAL_ERROR "Qt6_DIR points to a MinGW Qt kit while the compiler is MSVC. Use an MSVC Qt kit (e.g. .../msvc*/lib/cmake/Qt6).")
     endif()

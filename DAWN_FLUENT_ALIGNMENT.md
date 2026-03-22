@@ -15,6 +15,7 @@ This checklist maps the FluentUI component guidance in `dawn.md` to the current 
 - `FluCarousel`: homepage recommendation/workspace carousel is integrated in `ui/qml/pages/HomePage.qml`.
 - `FluFlipView`: homepage vertical workspace preview is integrated in `ui/qml/pages/HomePage.qml`.
 - `FluDatePicker` / `FluTimePicker`: scheduled backup policy controls are integrated in `ui/qml/pages/SettingsPage.qml`.
+- Welcome/onboarding media panel: real playback is integrated in `ui/qml/pages/FirstLaunchWizardPage.qml` via `QtMultimedia` (`MediaPlayer` + `VideoOutput`) with interactive controls, limited to onboarding only.
 - `FluTreeView`: dependency tree implemented in `ui/qml/pages/ContentCenterPage.qml`.
 - `FluTableView`: structured tables implemented across pages:
   - `ui/qml/pages/ContentCenterPage.qml`
@@ -39,7 +40,7 @@ This checklist maps the FluentUI component guidance in `dawn.md` to the current 
 
 ## Not Yet Implemented (From `dawn.md` Suggested Usage)
 
-- `FluMediaPlayer`: not available in the current integrated `zhuzichu520/FluentUI` codebase snapshot (no `FluMediaPlayer.qml` in `external/FluentUI/src/Qt6/imports/FluentUI/Controls`), so onboarding media panel remains pending until upstream component availability.
+- `FluMediaPlayer`: upstream component is still unavailable in the current integrated `zhuzichu520/FluentUI` snapshot, so Dawn uses a non-fake `QtMultimedia` implementation for the onboarding video panel until FluentUI exposes the control on mainline.
 
 ## Notes
 

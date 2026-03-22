@@ -1,12 +1,14 @@
 import QtQuick
 import QtQuick.Controls
 import QtQuick.Layouts
+import QtMultimedia
 import FluentUI 1.0
 import "../components"
 
 Item {
     id: root
     property var appViewModel
+    property string onboardingVideoUrl: "https://commondatastorage.googleapis.com/gtv-videos-bucket/sample/ForBiggerFun.mp4"
 
     Flickable {
         anchors.fill: parent
@@ -110,18 +112,131 @@ Item {
                             anchors.fill: parent
                             spacing: 14
 
-                            FluText {
-                                text: "Dawn keeps instance state, content installs, and repair actions in separate workflows."
-                                color: "#dce5f0"
-                                font.pixelSize: 14
-                                wrapMode: Text.WordWrap
-                            }
+                            RowLayout {
+                                width: parent.width
+                                spacing: 14
 
-                            FluText {
-                                text: "Next, review where Dawn stores data and how its cache is maintained."
-                                color: "#8ea0b7"
-                                font.pixelSize: 12
-                                wrapMode: Text.WordWrap
+                                ColumnLayout {
+                                    Layout.fillWidth: true
+                                    Layout.preferredWidth: 380
+                                    spacing: 10
+
+                                    FluText {
+                                        text: "Dawn keeps instance state, content installs, and repair actions in separate workflows."
+                                        color: "#dce5f0"
+                                        font.pixelSize: 14
+                                        wrapMode: Text.WordWrap
+                                    }
+
+                                    FluText {
+                                        text: "Welcome media uses Qt Multimedia because the current FluentUI snapshot does not ship FluMediaPlayer."
+                                        color: "#8ea0b7"
+                                        font.pixelSize: 12
+                                        wrapMode: Text.WordWrap
+                                    }
+
+                                    FluTextBox {
+                                        Layout.fillWidth: true
+                                        text: root.onboardingVideoUrl
+                                        placeholderText: "Paste MP4 URL or local file URI"
+                                        onEditingFinished: root.onboardingVideoUrl = text
+                                    }
+
+                                    RowLayout {
+                                        Layout.fillWidth: true
+                                        spacing: 8
+
+                                        FluButton {
+                                            text: "Sample A"
+                                            onClicked: root.onboardingVideoUrl = "https://commondatastorage.googleapis.com/gtv-videos-bucket/sample/ForBiggerFun.mp4"
+                                        }
+
+                                        FluButton {
+                                            text: "Sample B"
+                                            onClicked: root.onboardingVideoUrl = "https://commondatastorage.googleapis.com/gtv-videos-bucket/sample/BigBuckBunny.mp4"
+                                        }
+                                    }
+                                }
+
+                                FluFrame {
+                                    Layout.fillWidth: true
+                                    Layout.preferredWidth: 470
+                                    Layout.fillHeight: true
+                                    radius: 12
+                                    color: Qt.rgba(1, 1, 1, 0.02)
+                                    border.color: Qt.rgba(1, 1, 1, 0.08)
+
+                                    Column {
+                                        anchors.fill: parent
+                                        anchors.margins: 8
+                                        spacing: 8
+
+                                        Item {
+                                            width: parent.width
+                                            height: 170
+
+                                            Rectangle {
+                                                anchors.fill: parent
+                                                radius: 8
+                                                color: "#101722"
+                                                border.color: Qt.rgba(1, 1, 1, 0.10)
+                                                border.width: 1
+                                            }
+
+                                            VideoOutput {
+                                                id: onboardingVideoOutput
+                                                anchors.fill: parent
+                                                fillMode: VideoOutput.PreserveAspectFit
+                                            }
+                                        }
+
+                                        RowLayout {
+                                            width: parent.width
+                                            spacing: 8
+
+                                            FluButton {
+                                                text: onboardingPlayer.playbackState === MediaPlayer.PlayingState ? "Pause" : "Play"
+                                                onClicked: {
+                                                    if (onboardingPlayer.playbackState === MediaPlayer.PlayingState) {
+                                                        onboardingPlayer.pause()
+                                                    } else {
+                                                        onboardingPlayer.play()
+                                                    }
+                                                }
+                                            }
+
+                                            FluButton {
+                                                text: "Restart"
+                                                onClicked: {
+                                                    onboardingPlayer.stop()
+                                                    onboardingPlayer.play()
+                                                }
+                                            }
+
+                                            FluButton {
+                                                text: onboardingAudioOutput.muted ? "Unmute" : "Mute"
+                                                onClicked: onboardingAudioOutput.muted = !onboardingAudioOutput.muted
+                                            }
+
+                                            FluText {
+                                                Layout.fillWidth: true
+                                                horizontalAlignment: Text.AlignRight
+                                                text: onboardingPlayer.mediaStatus === MediaPlayer.BufferedMedia ? "Buffered" : "Loading"
+                                                color: "#8ea0b7"
+                                                font.pixelSize: 11
+                                            }
+                                        }
+
+                                        FluText {
+                                            width: parent.width
+                                            visible: onboardingPlayer.error !== MediaPlayer.NoError
+                                            text: "Video error: " + onboardingPlayer.errorString
+                                            color: "#f2c5ba"
+                                            font.pixelSize: 11
+                                            wrapMode: Text.WordWrap
+                                        }
+                                    }
+                                }
                             }
 
                             RowLayout {
@@ -300,5 +415,17 @@ Item {
                 }
             }
         }
+    }
+
+    AudioOutput {
+        id: onboardingAudioOutput
+        volume: 0.22
+    }
+
+    MediaPlayer {
+        id: onboardingPlayer
+        source: root.onboardingVideoUrl
+        audioOutput: onboardingAudioOutput
+        videoOutput: onboardingVideoOutput
     }
 }

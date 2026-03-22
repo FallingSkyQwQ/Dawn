@@ -19,6 +19,7 @@ target_link_libraries(dawn_ui
         Qt6::Gui
         Qt6::Qml
         Qt6::Quick
+        Qt6::Multimedia
 )
 
 if(DAWN_USE_FLUENTUI AND TARGET fluentuiplugin)
