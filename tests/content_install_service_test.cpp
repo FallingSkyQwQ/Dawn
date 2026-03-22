@@ -201,6 +201,19 @@ TEST(ContentInstallService, RollsBackTargetFilesWhenLockWriteFails) {
     EXPECT_FALSE(std::filesystem::exists(result.deployedPath));
     EXPECT_FALSE(result.lockPath.empty());
     EXPECT_FALSE(std::filesystem::exists(result.lockPath));
+    ASSERT_GE(result.rollbackEvents.size(), 3u);
+    EXPECT_TRUE(std::all_of(result.rollbackEvents.begin(), result.rollbackEvents.end(), [](const ContentInstallResult::RollbackEvent& event) {
+        return !event.step.empty() && !event.action.empty() && !event.target.empty() && !event.status.empty();
+    }));
+    EXPECT_TRUE(std::any_of(result.rollbackEvents.begin(), result.rollbackEvents.end(), [](const ContentInstallResult::RollbackEvent& event) {
+        return event.action == "remove staging" && event.status == "removed";
+    }));
+    EXPECT_TRUE(std::any_of(result.rollbackEvents.begin(), result.rollbackEvents.end(), [](const ContentInstallResult::RollbackEvent& event) {
+        return event.action == "remove deployed artifact" && event.status == "removed";
+    }));
+    EXPECT_TRUE(std::any_of(result.rollbackEvents.begin(), result.rollbackEvents.end(), [](const ContentInstallResult::RollbackEvent& event) {
+        return event.action == "remove lock" && event.status == "skipped";
+    }));
     EXPECT_TRUE(std::any_of(result.logs.begin(), result.logs.end(), [](const std::string& log) {
         return log.find("rollback:") != std::string::npos;
     }));

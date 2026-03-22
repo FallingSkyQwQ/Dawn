@@ -1,4 +1,5 @@
 build/
+build-test/
 dawn-data/
 CMakeFiles/
 CMakeCache.txt

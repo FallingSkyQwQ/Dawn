@@ -6,9 +6,12 @@
 
 #include <gtest/gtest.h>
 
+#include <atomic>
 #include <chrono>
 #include <algorithm>
 #include <filesystem>
+#include <map>
+#include <thread>
 
 using namespace dawn::core;
 
@@ -145,52 +148,107 @@ TEST(DownloadService, ResumesPartialDownloadsWithRangeHeader) {
     std::filesystem::remove_all(root);
 }
 
-TEST(DownloadService, DownloadsFileInSequentialChunks) {
+TEST(DownloadService, DownloadsFileInConcurrentChunks) {
     auto client = std::make_shared<dawn::infra::net::FakeHttpClient>();
-    client->push_response(dawn::infra::net::HttpResponse{206, {{"Content-Range", "bytes 0-3/11"}}, "hell"});
-    client->push_response(dawn::infra::net::HttpResponse{206, {{"Content-Range", "bytes 4-7/11"}}, "o wo"});
-    client->push_response(dawn::infra::net::HttpResponse{206, {{"Content-Range", "bytes 8-10/11"}}, "rld"});
+    const std::map<std::string, std::pair<std::string, std::string>> chunkResponses = {
+        {"bytes=0-1", {"ab", "bytes 0-1/8"}},
+        {"bytes=2-3", {"cd", "bytes 2-3/8"}},
+        {"bytes=4-5", {"ef", "bytes 4-5/8"}},
+        {"bytes=6-7", {"gh", "bytes 6-7/8"}},
+    };
 
-    const std::vector<std::string> expectedRanges = {"bytes=0-3", "bytes=4-7", "bytes=8-10"};
-    std::size_t requestIndex = 0;
-    client->set_request_validator([&](const dawn::infra::net::HttpRequest& request) -> std::optional<std::string> {
-        if (requestIndex >= expectedRanges.size()) {
-            return std::string("unexpected extra request");
+    std::atomic_size_t activeRequests{0};
+    std::atomic_size_t maxActiveRequests{0};
+    client->set_response_handler([&](const dawn::infra::net::HttpRequest& request) {
+        const auto rangeIt = request.headers.find("Range");
+        if (rangeIt == request.headers.end()) {
+            return dawn::infra::net::HttpResponse{500, {}, "missing range"};
         }
-        const auto it = request.headers.find("Range");
-        if (it == request.headers.end()) {
-            return std::string("missing Range header");
+
+        const auto current = activeRequests.fetch_add(1) + 1;
+        auto observed = maxActiveRequests.load();
+        while (observed < current && !maxActiveRequests.compare_exchange_weak(observed, current)) {
         }
-        if (it->second != expectedRanges[requestIndex]) {
-            return std::string("unexpected Range header: " + it->second);
+
+        std::this_thread::sleep_for(std::chrono::milliseconds(25));
+
+        const auto responseIt = chunkResponses.find(rangeIt->second);
+        if (responseIt == chunkResponses.end()) {
+            activeRequests.fetch_sub(1);
+            return dawn::infra::net::HttpResponse{500, {}, "unexpected range: " + rangeIt->second};
         }
-        ++requestIndex;
-        return std::nullopt;
+
+        const auto& [body, contentRange] = responseIt->second;
+        activeRequests.fetch_sub(1);
+        return dawn::infra::net::HttpResponse{206, {{"Content-Range", contentRange}}, body};
     });
 
     const auto root = std::filesystem::temp_directory_path() / "dawn-download-chunks";
     std::filesystem::remove_all(root);
     const auto destination = root / "artifact.bin";
 
-    DownloadService service(client);
+    DownloadService service(client, 3);
     DownloadRequest request;
     request.id = "download-chunked";
     request.title = "Chunked Artifact";
     request.url = "https://example.invalid/artifact.bin";
     request.destination = destination;
-    request.chunkSizeBytes = 4;
-    request.expectedHash = dawn::infra::hash::sha256_hex("hello world");
+    request.chunkSizeBytes = 2;
+    request.chunkConcurrency = 3;
+    request.expectedHash = dawn::infra::hash::sha256_hex("abcdefgh");
 
     const auto result = service.execute(request);
 
     EXPECT_TRUE(result.success);
     EXPECT_EQ(result.state, DownloadState::Completed);
-    EXPECT_EQ(result.chunks.size(), 3u);
-    EXPECT_TRUE(client->validation_errors().empty());
-    EXPECT_EQ(read_file(destination), "hello world");
-    EXPECT_EQ(result.artifact.bytesWritten, std::string("hello world").size());
+    EXPECT_EQ(result.chunks.size(), 4u);
+    EXPECT_EQ(read_file(destination), "abcdefgh");
+    EXPECT_EQ(result.artifact.bytesWritten, std::string("abcdefgh").size());
     EXPECT_EQ(result.chunks.front().chunk.index, 0u);
-    EXPECT_EQ(result.chunks.back().chunk.index, 2u);
+    EXPECT_EQ(result.chunks.back().chunk.index, 3u);
+    EXPECT_GT(maxActiveRequests.load(), 1u);
+
+    std::filesystem::remove_all(root);
+}
+
+TEST(DownloadService, FailsChunkedDownloadWithoutLeavingPartialFile) {
+    auto client = std::make_shared<dawn::infra::net::FakeHttpClient>();
+    client->set_response_handler([&](const dawn::infra::net::HttpRequest& request) {
+        const auto rangeIt = request.headers.find("Range");
+        if (rangeIt == request.headers.end()) {
+            return dawn::infra::net::HttpResponse{500, {}, "missing range"};
+        }
+        if (rangeIt->second == "bytes=0-1") {
+            return dawn::infra::net::HttpResponse{206, {{"Content-Range", "bytes 0-1/6"}}, "ab"};
+        }
+        if (rangeIt->second == "bytes=2-3") {
+            return dawn::infra::net::HttpResponse{500, {}, "chunk failure"};
+        }
+        return dawn::infra::net::HttpResponse{206, {{"Content-Range", "bytes 4-5/6"}}, "ef"};
+    });
+
+    const auto root = std::filesystem::temp_directory_path() / "dawn-download-chunks-fail";
+    std::filesystem::remove_all(root);
+    const auto destination = root / "artifact.bin";
+
+    DownloadService service(client, 3);
+    DownloadRequest request;
+    request.id = "download-chunked-fail";
+    request.title = "Chunked Artifact Fail";
+    request.url = "https://example.invalid/artifact.bin";
+    request.destination = destination;
+    request.chunkSizeBytes = 2;
+    request.chunkConcurrency = 3;
+    request.expectedHash = dawn::infra::hash::sha256_hex("abcdef");
+
+    const auto result = service.execute(request);
+
+    EXPECT_FALSE(result.success);
+    EXPECT_EQ(result.state, DownloadState::Failed);
+    EXPECT_FALSE(std::filesystem::exists(destination));
+    EXPECT_TRUE(std::any_of(result.logs.begin(), result.logs.end(), [](const std::string& log) {
+        return log.find("chunk download failed") != std::string::npos;
+    }));
 
     std::filesystem::remove_all(root);
 }
@@ -224,9 +282,12 @@ TEST(DownloadService, ThrottlesChunkDownloadsUsingConfiguredRate) {
 
     EXPECT_TRUE(result.success);
     ASSERT_EQ(sleeps.size(), 3u);
-    EXPECT_EQ(sleeps[0], std::chrono::milliseconds(1000));
-    EXPECT_EQ(sleeps[1], std::chrono::milliseconds(1000));
-    EXPECT_EQ(sleeps[2], std::chrono::milliseconds(1000));
+    EXPECT_GE(sleeps[0], std::chrono::milliseconds(900));
+    EXPECT_LT(sleeps[0], std::chrono::milliseconds(1100));
+    EXPECT_GT(sleeps[1], sleeps[0]);
+    EXPECT_GT(sleeps[2], sleeps[1]);
+    EXPECT_GE(sleeps[2], std::chrono::milliseconds(2900));
+    EXPECT_LT(sleeps[2], std::chrono::milliseconds(3100));
     EXPECT_EQ(read_file(destination), "abcdef");
 
     std::filesystem::remove_all(root);

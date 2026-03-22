@@ -36,6 +36,14 @@ struct ContentInstallResult {
     TaskPlan plan;
     TaskResult taskResult;
     std::vector<std::string> logs;
+    struct RollbackEvent {
+        std::string step;
+        std::string action;
+        std::string target;
+        std::string status;
+        std::string message;
+    };
+    std::vector<RollbackEvent> rollbackEvents;
     std::vector<std::string> missingDependencies;
     std::vector<std::string> conflicts;
 };

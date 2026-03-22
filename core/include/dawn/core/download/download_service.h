@@ -46,6 +46,7 @@ struct DownloadRequest {
     int retryCount = 0;
     bool overwriteExisting = true;
     std::size_t chunkSizeBytes = 0;
+    std::size_t chunkConcurrency = 0;
 };
 
 struct DownloadChunk {
@@ -58,6 +59,7 @@ struct DownloadChunkResult {
     DownloadChunk chunk;
     std::string sourceUrl;
     std::size_t bytesWritten = 0;
+    std::string body;
     std::string checksum;
     bool success = false;
     std::string error;
@@ -148,7 +150,6 @@ private:
     int maxConcurrency_ = 4;
     std::size_t bytesPerSecond_ = 0;
     Sleeper sleeper_;
-    mutable std::mutex clientMutex_;
     std::vector<DownloadJob> jobs_;
 };
 

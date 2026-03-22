@@ -339,7 +339,12 @@ DownloadResult DownloadService::execute_single(const DownloadRequest& request, T
     TaskPipeline pipeline(result.plan);
     pipeline.start();
     result.state = DownloadState::Running;
-    result.logs.push_back("started download plan: " + result.plan.id);
+    std::mutex logMutex;
+    auto append_log = [&](std::string message) {
+        std::lock_guard<std::mutex> lock(logMutex);
+        result.logs.push_back(std::move(message));
+    };
+    append_log("started download plan: " + result.plan.id);
 
     if (urls.empty()) {
         result.error = "download url is required";
@@ -349,7 +354,9 @@ DownloadResult DownloadService::execute_single(const DownloadRequest& request, T
         }
         result.plan = pipeline.plan();
         result.taskResult = pipeline.finish(result.error);
-        result.logs.insert(result.logs.end(), result.taskResult.logs.begin(), result.taskResult.logs.end());
+        for (const auto& log : result.taskResult.logs) {
+            append_log(log);
+        }
         result.state = DownloadState::Failed;
         result.success = false;
         result.artifact.attempts = 0;
@@ -364,7 +371,9 @@ DownloadResult DownloadService::execute_single(const DownloadRequest& request, T
         }
         result.plan = pipeline.plan();
         result.taskResult = pipeline.finish(result.error);
-        result.logs.insert(result.logs.end(), result.taskResult.logs.begin(), result.taskResult.logs.end());
+        for (const auto& log : result.taskResult.logs) {
+            append_log(log);
+        }
         result.state = DownloadState::Failed;
         result.success = false;
         return result;
@@ -379,7 +388,9 @@ DownloadResult DownloadService::execute_single(const DownloadRequest& request, T
         }
         result.plan = pipeline.plan();
         result.taskResult = pipeline.finish(result.error);
-        result.logs.insert(result.logs.end(), result.taskResult.logs.begin(), result.taskResult.logs.end());
+        for (const auto& log : result.taskResult.logs) {
+            append_log(log);
+        }
         result.state = DownloadState::Failed;
         result.success = false;
         return result;
@@ -389,7 +400,7 @@ DownloadResult DownloadService::execute_single(const DownloadRequest& request, T
     if (queue) {
         queue->complete_step(result.plan.id, "prepare", TaskStatus::Succeeded, "destination ready");
     }
-    result.logs.push_back("prepare: destination ready");
+    append_log("prepare: destination ready");
 
     const bool resumeRequested = !request.overwriteExisting && std::filesystem::exists(request.destination);
     std::uintmax_t existingBytes = 0;
@@ -404,12 +415,14 @@ DownloadResult DownloadService::execute_single(const DownloadRequest& request, T
             }
             result.plan = pipeline.plan();
             result.taskResult = pipeline.finish(result.error);
-            result.logs.insert(result.logs.end(), result.taskResult.logs.begin(), result.taskResult.logs.end());
+            for (const auto& log : result.taskResult.logs) {
+                append_log(log);
+            }
             result.state = DownloadState::Failed;
             result.success = false;
             return result;
         }
-        result.logs.push_back("resume from existing file size: " + std::to_string(existingBytes));
+        append_log("resume from existing file size: " + std::to_string(existingBytes));
     }
 
     const bool chunkedDownload = request.chunkSizeBytes > 0 && !resumeRequested;
@@ -418,6 +431,42 @@ DownloadResult DownloadService::execute_single(const DownloadRequest& request, T
     std::string lastError;
     bool downloadSucceeded = false;
     int attempt = 0;
+    struct SharedRateLimiter {
+        std::size_t bytesPerSecond = 0;
+        DownloadService::Sleeper sleeper;
+        mutable std::mutex mutex;
+        std::chrono::steady_clock::time_point nextAvailable = std::chrono::steady_clock::now();
+
+        void consume(std::size_t bytes) {
+            if (bytesPerSecond == 0 || bytes == 0 || !sleeper) {
+                return;
+            }
+            const auto delay = DownloadService::throttle_duration(bytes, bytesPerSecond);
+            if (delay.count() <= 0) {
+                return;
+            }
+            std::chrono::steady_clock::time_point wakeTime;
+            {
+                std::lock_guard<std::mutex> lock(mutex);
+                const auto now = std::chrono::steady_clock::now();
+                if (nextAvailable < now) {
+                    nextAvailable = now;
+                }
+                nextAvailable += delay;
+                wakeTime = nextAvailable;
+            }
+            const auto now = std::chrono::steady_clock::now();
+            if (wakeTime > now) {
+                sleeper(std::chrono::duration_cast<std::chrono::milliseconds>(wakeTime - now));
+            }
+        }
+    };
+    SharedRateLimiter rateLimiter;
+    rateLimiter.bytesPerSecond = bytesPerSecond_;
+    rateLimiter.sleeper = sleeper_;
+    auto throttle_shared = [&](std::size_t bytes) {
+        rateLimiter.consume(bytes);
+    };
 
     auto perform_standard_download = [&](const std::string& url, int retry) -> bool {
         auto downloadRequest = make_get_request(url);
@@ -425,15 +474,11 @@ DownloadResult DownloadService::execute_single(const DownloadRequest& request, T
             downloadRequest.headers.emplace("Range", "bytes=" + std::to_string(existingBytes) + "-");
         }
 
-        dawn::infra::net::HttpResponse response;
-        {
-            std::lock_guard<std::mutex> lock(clientMutex_);
-            response = client_->send(downloadRequest);
-        }
+        const auto response = client_->send(downloadRequest);
 
         if (!response.success()) {
             lastError = "http status " + std::to_string(response.statusCode);
-            result.logs.push_back(make_download_error("download failed from " + url, retry, maxAttempts, lastError));
+            append_log(make_download_error("download failed from " + url, retry, maxAttempts, lastError));
             return false;
         }
 
@@ -442,11 +487,11 @@ DownloadResult DownloadService::execute_single(const DownloadRequest& request, T
         std::string writeError;
         if (!write_download_segment(request.destination, response.body, appendResponse, &writeError)) {
             lastError = writeError;
-            result.logs.push_back(make_download_error(appendResponse ? "append failed from " + url : "write failed from " + url, retry, maxAttempts, lastError));
+            append_log(make_download_error(appendResponse ? "append failed from " + url : "write failed from " + url, retry, maxAttempts, lastError));
             return false;
         }
 
-        throttle(response.body.size());
+        throttle_shared(response.body.size());
         result.artifact.bytesWritten = appendResponse
             ? static_cast<std::size_t>(existingBytes + response.body.size())
             : response.body.size();
@@ -460,108 +505,218 @@ DownloadResult DownloadService::execute_single(const DownloadRequest& request, T
             },
             url,
             response.body.size(),
+            response.body,
             dawn::infra::hash::sha256_hex(response.body),
             true,
             {},
         });
-        result.logs.push_back("download wrote " + std::to_string(result.artifact.bytesWritten) + " bytes from " + url);
+        append_log("download wrote " + std::to_string(result.artifact.bytesWritten) + " bytes from " + url);
         return true;
     };
 
     auto perform_chunked_download = [&](const std::string& url, int retry) -> bool {
-        std::uintmax_t currentOffset = 0;
-        std::optional<std::uintmax_t> totalSize;
-        std::size_t chunkIndex = 0;
+        const auto chunkSize = std::max<std::size_t>(1, request.chunkSizeBytes);
+        auto probeRequest = make_get_request(url);
+        probeRequest.headers.emplace("Range", "bytes=0-" + std::to_string(chunkSize - 1));
+        const auto probeResponse = client_->send(probeRequest);
+        if (!probeResponse.success()) {
+            lastError = "http status " + std::to_string(probeResponse.statusCode);
+            append_log(make_download_error("chunk probe failed from " + url, retry, maxAttempts, lastError));
+            return false;
+        }
 
-        while (true) {
-            const auto chunkSize = std::max<std::size_t>(1, request.chunkSizeBytes);
-            const std::uintmax_t chunkStart = currentOffset;
-            const std::uintmax_t chunkEnd = totalSize
-                ? std::min<std::uintmax_t>(*totalSize - 1, chunkStart + static_cast<std::uintmax_t>(chunkSize) - 1)
-                : chunkStart + static_cast<std::uintmax_t>(chunkSize) - 1;
+        std::vector<DownloadChunkResult> chunkResults;
+        std::vector<std::string> chunkBodies;
 
-            auto downloadRequest = make_get_request(url);
-            downloadRequest.headers.emplace("Range", "bytes=" + std::to_string(chunkStart) + "-" + std::to_string(chunkEnd));
-
-            dawn::infra::net::HttpResponse response;
-            {
-                std::lock_guard<std::mutex> lock(clientMutex_);
-                response = client_->send(downloadRequest);
-            }
-
-            if (!response.success()) {
-                lastError = "http status " + std::to_string(response.statusCode);
-                result.logs.push_back(make_download_error("chunk download failed from " + url, retry, maxAttempts, lastError));
-                return false;
-            }
-
-            if (response.statusCode != 200 && response.statusCode != 206) {
-                lastError = "unexpected http status " + std::to_string(response.statusCode);
-                result.logs.push_back(make_download_error("chunk download failed from " + url, retry, maxAttempts, lastError));
-                return false;
-            }
-            if (response.statusCode == 200 && chunkIndex > 0) {
-                lastError = "server ignored range request for chunk " + std::to_string(chunkIndex);
-                result.logs.push_back(make_download_error("chunk download failed from " + url, retry, maxAttempts, lastError));
-                return false;
-            }
-
+        auto finalize_chunk_download = [&](const std::vector<DownloadChunkResult>& orderedChunks, const std::vector<std::string>& bodies) -> bool {
+            const std::filesystem::path tempPath = request.destination.string() + ".partial";
             std::string writeError;
-            const bool appendChunk = chunkIndex > 0;
-            if (!write_download_segment(request.destination, response.body, appendChunk, &writeError)) {
-                lastError = writeError;
-                result.logs.push_back(make_download_error(appendChunk ? "append failed from " + url : "write failed from " + url, retry, maxAttempts, lastError));
+            if (!bodies.empty()) {
+                if (!write_download_segment(tempPath, bodies.front(), false, &writeError)) {
+                    lastError = writeError;
+                    append_log(make_download_error("chunk merge failed from " + url, retry, maxAttempts, lastError));
+                    std::error_code ec;
+                    std::filesystem::remove(tempPath, ec);
+                    return false;
+                }
+                for (std::size_t index = 1; index < bodies.size(); ++index) {
+                    if (!write_download_segment(tempPath, bodies[index], true, &writeError)) {
+                        lastError = writeError;
+                        append_log(make_download_error("chunk merge failed from " + url, retry, maxAttempts, lastError));
+                        std::error_code ec;
+                        std::filesystem::remove(tempPath, ec);
+                        return false;
+                    }
+                }
+            }
+
+            std::error_code ec;
+            std::filesystem::copy_file(tempPath, request.destination, std::filesystem::copy_options::overwrite_existing, ec);
+            if (ec) {
+                lastError = ec.message();
+                append_log(make_download_error("final copy failed from " + url, retry, maxAttempts, lastError));
+                std::error_code removeError;
+                std::filesystem::remove(tempPath, removeError);
+                return false;
+            }
+            std::error_code removeError;
+            std::filesystem::remove(tempPath, removeError);
+
+            result.chunks = orderedChunks;
+            result.artifact.sourceUrl = url;
+            result.artifact.bytesWritten = 0;
+            for (const auto& chunk : orderedChunks) {
+                result.artifact.bytesWritten += chunk.bytesWritten;
+            }
+            append_log("chunked download merged " + std::to_string(result.artifact.bytesWritten) + " bytes from " + url);
+            return true;
+        };
+
+        if (probeResponse.statusCode == 200) {
+            chunkResults.push_back(DownloadChunkResult{
+                DownloadChunk{0, 0, probeResponse.body.empty() ? 0 : static_cast<std::uintmax_t>(probeResponse.body.size() - 1)},
+                url,
+                probeResponse.body.size(),
+                probeResponse.body,
+                dawn::infra::hash::sha256_hex(probeResponse.body),
+                true,
+                {},
+            });
+            chunkBodies.push_back(probeResponse.body);
+            throttle_shared(probeResponse.body.size());
+            append_log("chunk 0 from " + url + " wrote " + std::to_string(probeResponse.body.size()) + " bytes");
+            if (!finalize_chunk_download(chunkResults, chunkBodies)) {
+                return false;
+            }
+            return true;
+        }
+
+        if (probeResponse.statusCode != 206) {
+            lastError = "unexpected http status " + std::to_string(probeResponse.statusCode);
+            append_log(make_download_error("chunk probe failed from " + url, retry, maxAttempts, lastError));
+            return false;
+        }
+
+        const auto contentRange = find_header_value(probeResponse, "Content-Range");
+        if (!contentRange.has_value()) {
+            lastError = "missing Content-Range header";
+            append_log(make_download_error("chunk probe failed from " + url, retry, maxAttempts, lastError));
+            return false;
+        }
+
+        const auto totalSize = parse_total_size_from_content_range(*contentRange);
+        if (!totalSize.has_value() || *totalSize == 0) {
+            lastError = "invalid total size in Content-Range";
+            append_log(make_download_error("chunk probe failed from " + url, retry, maxAttempts, lastError));
+            return false;
+        }
+
+        const auto plannedChunks = build_chunk_plan(*totalSize, chunkSize, 0);
+        if (plannedChunks.empty()) {
+            lastError = "chunk plan is empty";
+            append_log(make_download_error("chunk probe failed from " + url, retry, maxAttempts, lastError));
+            return false;
+        }
+
+        chunkResults.resize(plannedChunks.size());
+        chunkBodies.resize(plannedChunks.size());
+        chunkResults[0] = DownloadChunkResult{
+            plannedChunks.front(),
+            url,
+            probeResponse.body.size(),
+            probeResponse.body,
+            dawn::infra::hash::sha256_hex(probeResponse.body),
+            true,
+            {},
+        };
+        chunkBodies[0] = probeResponse.body;
+        throttle_shared(probeResponse.body.size());
+        append_log("chunk 0 from " + url + " wrote " + std::to_string(probeResponse.body.size()) + " bytes");
+
+        if (plannedChunks.size() > 1) {
+            const std::size_t desiredConcurrency = request.chunkConcurrency > 0
+                ? request.chunkConcurrency
+                : static_cast<std::size_t>(std::max(1, maxConcurrency_));
+            const std::size_t workerCount = std::max<std::size_t>(1, std::min(desiredConcurrency, plannedChunks.size() - 1));
+            std::atomic_size_t nextIndex{1};
+            std::atomic_bool cancelled{false};
+            std::mutex failureMutex;
+            std::string chunkFailure;
+
+            auto record_failure = [&](std::string message) {
+                std::lock_guard<std::mutex> lock(failureMutex);
+                if (chunkFailure.empty()) {
+                    chunkFailure = std::move(message);
+                }
+                cancelled.store(true);
+            };
+
+            std::vector<std::future<void>> workers;
+            workers.reserve(workerCount);
+            for (std::size_t worker = 0; worker < workerCount; ++worker) {
+                workers.push_back(std::async(std::launch::async, [&, url, retry]() {
+                    for (;;) {
+                        if (cancelled.load()) {
+                            break;
+                        }
+                        const auto index = nextIndex.fetch_add(1);
+                        if (index >= plannedChunks.size()) {
+                            break;
+                        }
+                        const auto& chunk = plannedChunks[index];
+                        auto chunkRequest = make_get_request(url);
+                        chunkRequest.headers.emplace("Range", "bytes=" + std::to_string(chunk.start) + "-" + std::to_string(chunk.end));
+                        const auto response = client_->send(chunkRequest);
+                        if (!response.success() || response.statusCode != 206) {
+                            record_failure(make_download_error("chunk download failed from " + url, retry, maxAttempts, "http status " + std::to_string(response.statusCode)));
+                            break;
+                        }
+                        DownloadChunkResult chunkResult;
+                        chunkResult.chunk = chunk;
+                        chunkResult.sourceUrl = url;
+                        chunkResult.bytesWritten = response.body.size();
+                        chunkResult.body = response.body;
+                        chunkResult.checksum = dawn::infra::hash::sha256_hex(response.body);
+                        chunkResult.success = true;
+                        chunkResults[index] = std::move(chunkResult);
+                        chunkBodies[index] = response.body;
+                        throttle_shared(response.body.size());
+                        append_log("chunk " + std::to_string(index) + " from " + url + " wrote " + std::to_string(response.body.size()) + " bytes");
+                    }
+                }));
+            }
+
+            for (auto& worker : workers) {
+                worker.get();
+            }
+
+            if (cancelled.load()) {
+                lastError = chunkFailure.empty() ? "chunk download failed" : chunkFailure;
+                append_log(lastError);
                 return false;
             }
 
-            throttle(response.body.size());
-
-            DownloadChunkResult chunkResult;
-            chunkResult.chunk = DownloadChunk{
-                chunkIndex,
-                chunkStart,
-                chunkStart + (response.body.empty() ? 0 : static_cast<std::uintmax_t>(response.body.size()) - 1),
-            };
-            chunkResult.sourceUrl = url;
-            chunkResult.bytesWritten = response.body.size();
-            chunkResult.checksum = dawn::infra::hash::sha256_hex(response.body);
-            chunkResult.success = true;
-            result.chunks.push_back(std::move(chunkResult));
-            result.artifact.sourceUrl = url;
-            result.artifact.bytesWritten += response.body.size();
-            result.logs.push_back("chunk " + std::to_string(chunkIndex) + " from " + url + " wrote " + std::to_string(response.body.size()) + " bytes");
-
-            if (response.statusCode == 206) {
-                if (const auto contentRange = find_header_value(response, "Content-Range"); contentRange.has_value()) {
-                    totalSize = parse_total_size_from_content_range(*contentRange);
+            for (std::size_t index = 0; index < chunkResults.size(); ++index) {
+                if (!chunkResults[index].success) {
+                    lastError = "missing chunk result at index " + std::to_string(index);
+                    append_log(lastError);
+                    return false;
                 }
-            } else {
-                totalSize = response.body.size();
-            }
-
-            if (response.body.empty()) {
-                break;
-            }
-            currentOffset += response.body.size();
-            ++chunkIndex;
-
-            if (totalSize.has_value() && currentOffset >= *totalSize) {
-                break;
-            }
-            if (!totalSize.has_value() && response.body.size() < chunkSize) {
-                break;
             }
         }
 
-        return !result.chunks.empty();
+        if (!finalize_chunk_download(chunkResults, chunkBodies)) {
+            return false;
+        }
+        return true;
     };
 
     for (const auto& url : urls) {
-        result.logs.push_back("download source: " + url);
+        append_log("download source: " + url);
         for (int retry = 1; retry <= maxAttempts; ++retry) {
             ++attempt;
             result.artifact.attempts = attempt;
-            result.logs.push_back(make_step_detail("download attempt from " + url, retry, maxAttempts));
+            append_log(make_step_detail("download attempt from " + url, retry, maxAttempts));
             result.chunks.clear();
             result.artifact.bytesWritten = 0;
             result.artifact.checksum.clear();
@@ -586,7 +741,7 @@ DownloadResult DownloadService::execute_single(const DownloadRequest& request, T
             lastError = make_download_error("source exhausted", retry, maxAttempts, lastError);
         }
         if (!downloadSucceeded && url != urls.back()) {
-            result.logs.push_back("falling back to next mirror");
+            append_log("falling back to next mirror");
         }
         if (downloadSucceeded) {
             break;
@@ -601,7 +756,9 @@ DownloadResult DownloadService::execute_single(const DownloadRequest& request, T
         }
         result.plan = pipeline.plan();
         result.taskResult = pipeline.finish(result.error);
-        result.logs.insert(result.logs.end(), result.taskResult.logs.begin(), result.taskResult.logs.end());
+        for (const auto& log : result.taskResult.logs) {
+            append_log(log);
+        }
         result.state = DownloadState::Failed;
         result.success = false;
         return result;
@@ -616,7 +773,9 @@ DownloadResult DownloadService::execute_single(const DownloadRequest& request, T
         }
         result.plan = pipeline.plan();
         result.taskResult = pipeline.finish(result.error);
-        result.logs.insert(result.logs.end(), result.taskResult.logs.begin(), result.taskResult.logs.end());
+        for (const auto& log : result.taskResult.logs) {
+            append_log(log);
+        }
         result.state = DownloadState::Failed;
         result.success = false;
         return result;
@@ -626,15 +785,17 @@ DownloadResult DownloadService::execute_single(const DownloadRequest& request, T
         if (!dawn::infra::hash::compare_hash(request.expectedHash, result.artifact.checksum)) {
             result.artifact.verified = false;
             result.error = "hash mismatch";
-            result.logs.push_back("expected hash: " + request.expectedHash);
-            result.logs.push_back("actual hash:   " + result.artifact.checksum);
+            append_log("expected hash: " + request.expectedHash);
+            append_log("actual hash:   " + result.artifact.checksum);
             pipeline.advance_step("verify", TaskStatus::Failed, result.error);
             if (queue) {
                 queue->complete_step(result.plan.id, "verify", TaskStatus::Failed, result.error);
             }
             result.plan = pipeline.plan();
             result.taskResult = pipeline.finish(result.error);
-            result.logs.insert(result.logs.end(), result.taskResult.logs.begin(), result.taskResult.logs.end());
+            for (const auto& log : result.taskResult.logs) {
+                append_log(log);
+            }
             result.state = DownloadState::Failed;
             result.success = false;
             return result;
@@ -644,25 +805,27 @@ DownloadResult DownloadService::execute_single(const DownloadRequest& request, T
         if (queue) {
             queue->complete_step(result.plan.id, "verify", TaskStatus::Succeeded, "hash verified");
         }
-        result.logs.push_back("hash verified");
+        append_log("hash verified");
     } else {
         result.artifact.verified = true;
         pipeline.advance_step("verify", TaskStatus::Succeeded, "hash skipped");
         if (queue) {
             queue->complete_step(result.plan.id, "verify", TaskStatus::Succeeded, "hash skipped");
         }
-        result.logs.push_back("hash skipped");
+        append_log("hash skipped");
     }
 
     pipeline.advance_step("finalize", TaskStatus::Succeeded, "download ready");
     if (queue) {
         queue->complete_step(result.plan.id, "finalize", TaskStatus::Succeeded, "download ready");
     }
-    result.logs.push_back("finalize: download ready");
+    append_log("finalize: download ready");
 
     result.plan = pipeline.plan();
     result.taskResult = pipeline.finish("download completed");
-    result.logs.insert(result.logs.end(), result.taskResult.logs.begin(), result.taskResult.logs.end());
+    for (const auto& log : result.taskResult.logs) {
+        append_log(log);
+    }
     result.state = DownloadState::Completed;
     result.success = true;
     return result;

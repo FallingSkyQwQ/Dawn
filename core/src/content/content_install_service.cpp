@@ -101,25 +101,39 @@ void add_logs(ContentInstallResult* result, const std::vector<std::string>& logs
     }
 }
 
-std::vector<std::string> cleanup_artifacts(const std::vector<std::filesystem::path>& paths) {
-    std::vector<std::string> logs;
-    for (const auto& path : paths) {
-        if (path.empty()) {
-            continue;
-        }
-        std::error_code ec;
-        if (!std::filesystem::exists(path, ec)) {
-            continue;
-        }
-        ec.clear();
-        const bool removed = std::filesystem::remove(path, ec);
-        if (removed) {
-            logs.push_back("removed " + path.generic_string());
-        } else if (ec) {
-            logs.push_back("failed to remove " + path.generic_string() + ": " + ec.message());
-        }
+void add_rollback_event(ContentInstallResult* result, const std::string& step, const std::string& action, const std::filesystem::path& target, const std::string& status, const std::string& message) {
+    if (!result) {
+        return;
     }
-    return logs;
+    result->rollbackEvents.push_back(ContentInstallResult::RollbackEvent{
+        step,
+        action,
+        target.generic_string(),
+        status,
+        message,
+    });
+    std::string log = "rollback: step=" + step + ", action=" + action + ", target=" + target.generic_string() + ", status=" + status;
+    if (!message.empty()) {
+        log += ", message=" + message;
+    }
+    result->logs.push_back(std::move(log));
+}
+
+void cleanup_target(ContentInstallResult* result, const std::string& step, const std::string& action, const std::filesystem::path& target) {
+    if (!result) {
+        return;
+    }
+    std::error_code ec;
+    const auto removedCount = std::filesystem::remove_all(target, ec);
+    if (ec) {
+        add_rollback_event(result, step, action, target, "failed", ec.message());
+        return;
+    }
+    if (removedCount == 0) {
+        add_rollback_event(result, step, action, target, "skipped", "not present");
+        return;
+    }
+    add_rollback_event(result, step, action, target, "removed", std::to_string(removedCount) + " item(s)");
 }
 
 bool mark_queue_step(TaskQueue* queue, const std::string& taskId, const std::string& stepId, TaskStatus status, const std::string& detail) {
@@ -318,12 +332,14 @@ ContentInstallResult ContentInstallService::install(const InstallRequest& reques
 
     const auto finalPath = final_path_for(*instance, request, *selected);
     const auto stagingPath = staging_path_for(*instance, request, *selected);
-    auto rollback_artifacts = [&](bool includeLockPath) {
-        std::vector<std::filesystem::path> paths = {stagingPath, finalPath};
-        if (includeLockPath && !result.lockPath.empty()) {
-            paths.push_back(result.lockPath);
+    auto rollback_artifacts = [&](const std::string& step, bool includeFinalPath, bool includeLockPath) {
+        cleanup_target(&result, step, "remove staging", stagingPath);
+        if (includeFinalPath) {
+            cleanup_target(&result, step, "remove deployed artifact", finalPath);
         }
-        add_logs(&result, cleanup_artifacts(paths), "rollback: ");
+        if (includeLockPath && !result.lockPath.empty()) {
+            cleanup_target(&result, step, "remove lock", result.lockPath);
+        }
     };
 
     DownloadRequest downloadRequest;
@@ -339,7 +355,7 @@ ContentInstallResult ContentInstallService::install(const InstallRequest& reques
     if (!result.downloadResult.success) {
         result.message = result.downloadResult.error.empty() ? "download failed" : result.downloadResult.error;
         fail_result(&result, &pipeline, queue, "download", result.message);
-        rollback_artifacts(false);
+        rollback_artifacts("download", false, false);
         return result;
     }
 
@@ -360,7 +376,7 @@ ContentInstallResult ContentInstallService::install(const InstallRequest& reques
     if (ec) {
         result.message = ec.message();
         fail_result(&result, &pipeline, queue, "deploy", result.message);
-        rollback_artifacts(false);
+        rollback_artifacts("deploy", false, false);
         return result;
     }
     result.deployedPath = finalPath;
@@ -382,7 +398,7 @@ ContentInstallResult ContentInstallService::install(const InstallRequest& reques
     if (!write_text_file(result.lockPath, content_lock_to_text(result.lock), &deployError)) {
         result.message = deployError;
         fail_result(&result, &pipeline, queue, "lock", result.message);
-        rollback_artifacts(true);
+        rollback_artifacts("lock", true, true);
         return result;
     }
     pipeline.advance_step("lock", TaskStatus::Succeeded, "content lock written");
@@ -390,7 +406,15 @@ ContentInstallResult ContentInstallService::install(const InstallRequest& reques
         queue->complete_step(result.queuedTaskId, "lock", TaskStatus::Succeeded, "content lock written");
     }
 
-    add_logs(&result, cleanup_artifacts({stagingPath}), "cleanup: ");
+    {
+        std::error_code ec;
+        const auto removed = std::filesystem::remove_all(stagingPath, ec);
+        if (ec) {
+            result.logs.push_back("cleanup: failed to remove staging " + stagingPath.generic_string() + ": " + ec.message());
+        } else if (removed > 0) {
+            result.logs.push_back("cleanup: removed staging " + stagingPath.generic_string());
+        }
+    }
     result.plan = pipeline.plan();
     result.taskResult = pipeline.finish("content installed");
     result.logs.insert(result.logs.end(), result.taskResult.logs.begin(), result.taskResult.logs.end());

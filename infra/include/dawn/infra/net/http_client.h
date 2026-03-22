@@ -7,6 +7,7 @@
 #include <map>
 #include <memory>
 #include <optional>
+#include <mutex>
 #include <sstream>
 #include <string>
 #include <string_view>
@@ -110,12 +111,21 @@ inline std::string form_encode(const std::vector<std::pair<std::string, std::str
 
 class InMemoryHttpClient final : public HttpClient {
 public:
+    using ResponseHandler = std::function<HttpResponse(const HttpRequest&)>;
+
     void set_response(HttpMethod method, std::string url, HttpResponse response) {
+        std::lock_guard<std::mutex> lock(mutex_);
         routes_[route_key(method, url)] = std::move(response);
     }
 
     void set_default_response(HttpResponse response) {
+        std::lock_guard<std::mutex> lock(mutex_);
         defaultResponse_ = std::move(response);
+    }
+
+    void set_response_handler(ResponseHandler handler) {
+        std::lock_guard<std::mutex> lock(mutex_);
+        responseHandler_ = std::move(handler);
     }
 
     const std::vector<HttpRequest>& requests() const noexcept {
@@ -123,16 +133,35 @@ public:
     }
 
     void clear() {
+        std::lock_guard<std::mutex> lock(mutex_);
         requests_.clear();
         routes_.clear();
+        responseHandler_ = {};
     }
 
     HttpResponse send(const HttpRequest& request) override {
-        requests_.push_back(request);
-        const auto it = routes_.find(route_key(request.method, request.url));
-        if (it != routes_.end()) {
-            return it->second;
+        ResponseHandler handler;
+        HttpResponse response;
+        bool hasResponse = false;
+        {
+            std::lock_guard<std::mutex> lock(mutex_);
+            requests_.push_back(request);
+            handler = responseHandler_;
+            if (!handler) {
+                const auto it = routes_.find(route_key(request.method, request.url));
+                if (it != routes_.end()) {
+                    response = it->second;
+                    hasResponse = true;
+                }
+            }
         }
+        if (handler) {
+            return handler(request);
+        }
+        if (hasResponse) {
+            return response;
+        }
+        std::lock_guard<std::mutex> lock(mutex_);
         return defaultResponse_;
     }
 
@@ -141,29 +170,41 @@ private:
         return to_string(method) + "|" + url;
     }
 
+    mutable std::mutex mutex_;
     std::map<std::string, HttpResponse> routes_;
     HttpResponse defaultResponse_{404, {}, R"({"error":"not_found"})"};
     std::vector<HttpRequest> requests_;
+    ResponseHandler responseHandler_;
 };
 
 class FakeHttpClient final : public HttpClient {
 public:
     using RequestValidator = std::function<std::optional<std::string>(const HttpRequest&)>;
+    using ResponseHandler = std::function<HttpResponse(const HttpRequest&)>;
 
     void push_response(HttpResponse response) {
+        std::lock_guard<std::mutex> lock(mutex_);
         responses_.push_back(std::move(response));
     }
 
     void set_default_response(HttpResponse response) {
+        std::lock_guard<std::mutex> lock(mutex_);
         defaultResponse_ = std::move(response);
     }
 
     void expect_header(std::string name, std::string value) {
+        std::lock_guard<std::mutex> lock(mutex_);
         expectedHeaders_.emplace_back(std::move(name), std::move(value));
     }
 
     void set_request_validator(RequestValidator validator) {
+        std::lock_guard<std::mutex> lock(mutex_);
         requestValidator_ = std::move(validator);
+    }
+
+    void set_response_handler(ResponseHandler handler) {
+        std::lock_guard<std::mutex> lock(mutex_);
+        responseHandler_ = std::move(handler);
     }
 
     const std::vector<HttpRequest>& requests() const noexcept {
@@ -179,41 +220,62 @@ public:
     }
 
     void clear() {
+        std::lock_guard<std::mutex> lock(mutex_);
         requests_.clear();
         responses_.clear();
         expectedHeaders_.clear();
         validationErrors_.clear();
         requestValidator_ = {};
+        responseHandler_ = {};
     }
 
     HttpResponse send(const HttpRequest& request) override {
-        requests_.push_back(request);
-        for (const auto& [name, value] : expectedHeaders_) {
-            const auto it = request.headers.find(name);
-            if (it == request.headers.end() || it->second != value) {
-                validationErrors_.push_back("missing or mismatched header: " + name + "=" + value);
+        RequestValidator validator;
+        ResponseHandler handler;
+        HttpResponse response;
+        bool hasResponse = false;
+        {
+            std::lock_guard<std::mutex> lock(mutex_);
+            requests_.push_back(request);
+            for (const auto& [name, value] : expectedHeaders_) {
+                const auto it = request.headers.find(name);
+                if (it == request.headers.end() || it->second != value) {
+                    validationErrors_.push_back("missing or mismatched header: " + name + "=" + value);
+                }
+            }
+            validator = requestValidator_;
+            handler = responseHandler_;
+            if (!handler && !responses_.empty()) {
+                response = std::move(responses_.front());
+                responses_.pop_front();
+                hasResponse = true;
             }
         }
-        if (requestValidator_) {
-            if (const auto error = requestValidator_(request); error.has_value()) {
+        if (validator) {
+            if (const auto error = validator(request); error.has_value()) {
+                std::lock_guard<std::mutex> lock(mutex_);
                 validationErrors_.push_back(*error);
             }
         }
-        if (!responses_.empty()) {
-            auto response = std::move(responses_.front());
-            responses_.pop_front();
+        if (handler) {
+            return handler(request);
+        }
+        if (hasResponse) {
             return response;
         }
+        std::lock_guard<std::mutex> lock(mutex_);
         return defaultResponse_;
     }
 
 private:
+    mutable std::mutex mutex_;
     std::deque<HttpResponse> responses_;
     HttpResponse defaultResponse_{500, {}, R"({"error":"no_response_configured"})"};
     std::vector<HttpRequest> requests_;
     std::vector<std::pair<std::string, std::string>> expectedHeaders_;
     std::vector<std::string> validationErrors_;
     RequestValidator requestValidator_;
+    ResponseHandler responseHandler_;
 };
 
 } // namespace dawn::infra::net
