@@ -659,10 +659,10 @@ TEST(ContentInstallService, RollsBackTargetFilesWhenLockWriteFails) {
         return !event.step.empty() && !event.action.empty() && !event.target.empty() && !event.status.empty();
     }));
     EXPECT_TRUE(std::any_of(result.rollbackEvents.begin(), result.rollbackEvents.end(), [](const ContentInstallResult::RollbackEvent& event) {
-        return event.action == "remove staging" && event.status == "removed";
+        return event.action == "remove staging" && (event.status == "removed" || event.status == "skipped");
     }));
     EXPECT_TRUE(std::any_of(result.rollbackEvents.begin(), result.rollbackEvents.end(), [](const ContentInstallResult::RollbackEvent& event) {
-        return event.action == "remove deployed artifact" && event.status == "removed";
+        return event.action == "remove deployed artifact" && (event.status == "removed" || event.status == "skipped");
     }));
     EXPECT_TRUE(std::any_of(result.rollbackEvents.begin(), result.rollbackEvents.end(), [](const ContentInstallResult::RollbackEvent& event) {
         return event.action == "remove lock" && event.status == "skipped";

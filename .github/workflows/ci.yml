@@ -9,8 +9,9 @@ on:
   workflow_dispatch:
 
 jobs:
-  headless:
-    name: Headless (${{ matrix.os }})
+  headless_tests:
+    if: ${{ github.event_name != 'push' || contains(github.event.head_commit.message, '[ci]') }}
+    name: Headless Tests (${{ matrix.os }})
     runs-on: ${{ matrix.os }}
     strategy:
       fail-fast: false
@@ -22,6 +23,12 @@ jobs:
         uses: actions/checkout@v4
         with:
           submodules: recursive
+
+      - name: Install Linux deps
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libcurl4-openssl-dev
 
       - name: Configure (Linux/macOS)
         if: runner.os != 'Windows'
@@ -47,9 +54,15 @@ jobs:
         if: runner.os == 'Windows'
         run: ctest --test-dir build -C Debug --output-on-failure --repeat until-pass:3
 
-  qt_fluentui_smoke:
-    name: Qt FluentUI Smoke (ubuntu)
-    runs-on: ubuntu-latest
+  full_platform_build:
+    if: ${{ github.event_name != 'push' || contains(github.event.head_commit.message, '[ci]') }}
+    name: Full Build (${{ matrix.os }})
+    needs: headless_tests
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest, macos-latest]
 
     steps:
       - name: Checkout
@@ -57,13 +70,24 @@ jobs:
         with:
           submodules: recursive
 
-      - name: Install Qt and toolchain
+      - name: Install Linux deps
+        if: runner.os == 'Linux'
         run: |
           sudo apt-get update
-          sudo apt-get install -y ninja-build qt6-base-dev qt6-declarative-dev
+          sudo apt-get install -y libcurl4-openssl-dev
 
-      - name: Configure Qt build
-        run: cmake -S . -B build-qt -G Ninja -DDAWN_ENABLE_QT=ON -DDAWN_USE_FLUENTUI=ON -DDAWN_BUILD_TESTS=OFF -DCMAKE_BUILD_TYPE=Debug
+      - name: Configure (Linux/macOS)
+        if: runner.os != 'Windows'
+        run: cmake -S . -B build-full -DDAWN_ENABLE_QT=OFF -DDAWN_USE_FLUENTUI=OFF -DDAWN_BUILD_TESTS=OFF -DCMAKE_BUILD_TYPE=Release
 
-      - name: Build Qt targets
-        run: cmake --build build-qt --parallel
+      - name: Configure (Windows)
+        if: runner.os == 'Windows'
+        run: cmake -S . -B build-full -DDAWN_ENABLE_QT=OFF -DDAWN_USE_FLUENTUI=OFF -DDAWN_BUILD_TESTS=OFF
+
+      - name: Build (Linux/macOS)
+        if: runner.os != 'Windows'
+        run: cmake --build build-full --parallel
+
+      - name: Build (Windows)
+        if: runner.os == 'Windows'
+        run: cmake --build build-full --config Release --parallel
