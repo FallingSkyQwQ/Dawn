@@ -23,16 +23,19 @@ This checklist maps the FluentUI component guidance in `dawn.md` to the current 
   - `ui/qml/pages/InstancesPage.qml`
   - `ui/qml/pages/LogsRepairPage.qml`
 - `FluPivot`: instance workbench tabbed surface in `ui/qml/pages/InstancesPage.qml`.
+- `FluPagination`: integrated across large data tables:
+  - `ui/qml/pages/ContentCenterPage.qml`
+  - `ui/qml/pages/DownloadQueuePage.qml`
+  - `ui/qml/pages/HomePage.qml`
+  - `ui/qml/pages/InstancesPage.qml`
+  - `ui/qml/pages/LogsRepairPage.qml`
+- `FluTooltip`: explicit domain hints integrated in settings and instance workbench batch actions.
+- `FluScrollBar`: explicit page-level scrollbars (`ScrollBar.vertical: FluScrollBar {}`) are wired across wizard/settings/content/queue/instances/logs pages.
 - `FluToggleSwitch`, `FluSpinBox`, `FluTextBox`, `FluComboBox`, `FluButton`, `FluFilledButton`, `FluFrame`, `FluDivider`: used across core pages/components.
 
 ## Partially Implemented / Needs Expansion
 
-- `FluPagination`: integrated for high-volume tables in:
-  - `ui/qml/pages/ContentCenterPage.qml` (search results + versions)
-  - `ui/qml/pages/LogsRepairPage.qml` (repair execution logs)
-  Still pending broader rollout to all large tables.
-- `FluTooltip`: explicit hints added for advanced settings in `ui/qml/pages/SettingsPage.qml`; further contextual hints can be added across runtime and content expert flows.
-- `FluScrollBar`: used internally by Fluent table/tree controls, but no explicit page-level scrollbar strategy doc yet.
+- Motion/animation semantics in `dawn.md` are only partially codified; major workflows are functional, but timing/transition polish is not yet standardized by a dedicated animation token system.
 
 ## Not Yet Implemented (From `dawn.md` Suggested Usage)
 

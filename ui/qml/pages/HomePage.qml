@@ -7,6 +7,10 @@ import "../components"
 Item {
     id: root
     property var appViewModel
+    property int homeInstancePageCurrent: 1
+    property int homeInstanceItemsPerPage: 8
+    property int homeTaskPageCurrent: 1
+    property int homeTaskItemsPerPage: 8
 
     function recommendationCards() {
         var cards = []
@@ -71,6 +75,29 @@ Item {
         return rows
     }
 
+    function pagedRows(rows, pageCurrent, itemsPerPage) {
+        if (!rows || rows.length === 0) {
+            return []
+        }
+        if (itemsPerPage <= 0) {
+            return rows
+        }
+        var page = pageCurrent < 1 ? 1 : pageCurrent
+        var start = (page - 1) * itemsPerPage
+        if (start >= rows.length) {
+            return []
+        }
+        return rows.slice(start, Math.min(start + itemsPerPage, rows.length))
+    }
+
+    function pagedHomeInstanceRows() {
+        return pagedRows(homeInstanceRows(), homeInstancePageCurrent, homeInstanceItemsPerPage)
+    }
+
+    function pagedHomeTaskRows() {
+        return pagedRows(homeTaskRows(), homeTaskPageCurrent, homeTaskItemsPerPage)
+    }
+
     function previewPanels() {
         var panels = []
         panels.push({
@@ -100,6 +127,7 @@ Item {
         contentWidth: width
         contentHeight: layout.implicitHeight
         clip: true
+        ScrollBar.vertical: FluScrollBar {}
 
         ColumnLayout {
             id: layout
@@ -448,38 +476,72 @@ Item {
 
                 DawnCard {
                     Layout.fillWidth: true
-                    Layout.preferredHeight: 420
+                    Layout.preferredHeight: 460
                     title: "Recent Instances"
                     subtitle: "Loaded from JSON manifests."
 
-                    FluTableView {
+                    ColumnLayout {
                         anchors.fill: parent
-                        columnSource: [
-                            { "title": "Name", "dataIndex": "name", "width": 180 },
-                            { "title": "MC", "dataIndex": "mcVersion", "width": 90 },
-                            { "title": "Loader", "dataIndex": "loader", "width": 100 },
-                            { "title": "Health", "dataIndex": "health", "width": 140 },
-                            { "title": "Resources", "dataIndex": "resourceCount", "width": 110 }
-                        ]
-                        dataSource: root.homeInstanceRows()
+                        spacing: 10
+
+                        FluTableView {
+                            Layout.fillWidth: true
+                            Layout.fillHeight: true
+                            columnSource: [
+                                { "title": "Name", "dataIndex": "name", "width": 180 },
+                                { "title": "MC", "dataIndex": "mcVersion", "width": 90 },
+                                { "title": "Loader", "dataIndex": "loader", "width": 100 },
+                                { "title": "Health", "dataIndex": "health", "width": 140 },
+                                { "title": "Resources", "dataIndex": "resourceCount", "width": 110 }
+                            ]
+                            dataSource: root.pagedHomeInstanceRows()
+                        }
+
+                        FluPagination {
+                            Layout.alignment: Qt.AlignHCenter
+                            pageCurrent: root.homeInstancePageCurrent
+                            pageButtonCount: 5
+                            itemCount: root.appViewModel ? root.appViewModel.instanceCards.length : 0
+                            __itemPerPage: root.homeInstanceItemsPerPage
+                            onRequestPage: function(page) {
+                                root.homeInstancePageCurrent = page
+                            }
+                        }
                     }
                 }
 
                 DawnCard {
                     Layout.fillWidth: true
-                    Layout.preferredHeight: 420
+                    Layout.preferredHeight: 460
                     title: "Task Queue"
                     subtitle: "Download, verify, and install tasks."
 
-                    FluTableView {
+                    ColumnLayout {
                         anchors.fill: parent
-                        columnSource: [
-                            { "title": "Title", "dataIndex": "title", "width": 320 },
-                            { "title": "Status", "dataIndex": "status", "width": 130 },
-                            { "title": "Done", "dataIndex": "completedSteps", "width": 90 },
-                            { "title": "Steps", "dataIndex": "stepCount", "width": 90 }
-                        ]
-                        dataSource: root.homeTaskRows()
+                        spacing: 10
+
+                        FluTableView {
+                            Layout.fillWidth: true
+                            Layout.fillHeight: true
+                            columnSource: [
+                                { "title": "Title", "dataIndex": "title", "width": 320 },
+                                { "title": "Status", "dataIndex": "status", "width": 130 },
+                                { "title": "Done", "dataIndex": "completedSteps", "width": 90 },
+                                { "title": "Steps", "dataIndex": "stepCount", "width": 90 }
+                            ]
+                            dataSource: root.pagedHomeTaskRows()
+                        }
+
+                        FluPagination {
+                            Layout.alignment: Qt.AlignHCenter
+                            pageCurrent: root.homeTaskPageCurrent
+                            pageButtonCount: 5
+                            itemCount: root.appViewModel ? root.appViewModel.taskCards.length : 0
+                            __itemPerPage: root.homeTaskItemsPerPage
+                            onRequestPage: function(page) {
+                                root.homeTaskPageCurrent = page
+                            }
+                        }
                     }
                 }
             }

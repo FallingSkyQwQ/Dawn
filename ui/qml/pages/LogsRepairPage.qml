@@ -146,6 +146,7 @@ Item {
         contentWidth: width
         contentHeight: layout.implicitHeight
         clip: true
+        ScrollBar.vertical: FluScrollBar {}
 
         ColumnLayout {
             id: layout

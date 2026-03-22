@@ -242,6 +242,7 @@ Item {
         contentWidth: width
         contentHeight: contentColumn.implicitHeight
         clip: true
+        ScrollBar.vertical: FluScrollBar {}
 
         ColumnLayout {
             id: contentColumn

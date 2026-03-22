@@ -10,6 +10,8 @@ Item {
     property string lastShownAutoCreatedInstanceId: ""
     property string pendingDeletePath: ""
     property string pendingDeleteAssetType: ""
+    property int instanceListPageCurrent: 1
+    property int instanceListItemsPerPage: 10
 
     function tabIndex(tabId) {
         var tabs = appViewModel.activeInstanceWorkbench.tabs || []
@@ -40,6 +42,25 @@ Item {
             })
         }
         return rows
+    }
+
+    function pagedRows(rows, pageCurrent, itemsPerPage) {
+        if (!rows || rows.length === 0) {
+            return []
+        }
+        if (itemsPerPage <= 0) {
+            return rows
+        }
+        var page = pageCurrent < 1 ? 1 : pageCurrent
+        var start = (page - 1) * itemsPerPage
+        if (start >= rows.length) {
+            return []
+        }
+        return rows.slice(start, Math.min(start + itemsPerPage, rows.length))
+    }
+
+    function pagedInstanceTableRows() {
+        return pagedRows(instanceTableRows(), instanceListPageCurrent, instanceListItemsPerPage)
     }
 
     function activePreflight() {
@@ -278,6 +299,7 @@ Item {
         contentWidth: width
         contentHeight: layout.implicitHeight
         clip: true
+        ScrollBar.vertical: FluScrollBar {}
 
         ColumnLayout {
             id: layout
@@ -373,20 +395,37 @@ Item {
                         }
                     }
 
-                    FluTableView {
-                        id: instanceTable
+                    ColumnLayout {
                         anchors.fill: parent
-                        columnSource: [
-                            { "title": "Active", "dataIndex": "selected", "width": 60 },
-                            { "title": "Name", "dataIndex": "name", "width": 150 },
-                            { "title": "MC", "dataIndex": "mcVersion", "width": 80 },
-                            { "title": "Loader", "dataIndex": "loader", "width": 90 },
-                            { "title": "Health", "dataIndex": "health", "width": 120 },
-                            { "title": "Resources", "dataIndex": "resourceCount", "width": 90 },
-                            { "title": "Java", "dataIndex": "javaProfileId", "width": 120 },
-                            { "title": "Action", "dataIndex": "openAction", "width": 80 }
-                        ]
-                        dataSource: root.instanceTableRows()
+                        spacing: 10
+
+                        FluTableView {
+                            id: instanceTable
+                            Layout.fillWidth: true
+                            Layout.fillHeight: true
+                            columnSource: [
+                                { "title": "Active", "dataIndex": "selected", "width": 60 },
+                                { "title": "Name", "dataIndex": "name", "width": 150 },
+                                { "title": "MC", "dataIndex": "mcVersion", "width": 80 },
+                                { "title": "Loader", "dataIndex": "loader", "width": 90 },
+                                { "title": "Health", "dataIndex": "health", "width": 120 },
+                                { "title": "Resources", "dataIndex": "resourceCount", "width": 90 },
+                                { "title": "Java", "dataIndex": "javaProfileId", "width": 120 },
+                                { "title": "Action", "dataIndex": "openAction", "width": 80 }
+                            ]
+                            dataSource: root.pagedInstanceTableRows()
+                        }
+
+                        FluPagination {
+                            Layout.alignment: Qt.AlignHCenter
+                            pageCurrent: root.instanceListPageCurrent
+                            pageButtonCount: 5
+                            itemCount: root.appViewModel ? root.appViewModel.instanceCards.length : 0
+                            __itemPerPage: root.instanceListItemsPerPage
+                            onRequestPage: function(page) {
+                                root.instanceListPageCurrent = page
+                            }
+                        }
                     }
                 }
 
@@ -458,6 +497,7 @@ Item {
                                                             win.showSuccess("Bulk enable complete", 2200, "Updated: " + count)
                                                         }
                                                     }
+                                                    FluTooltip { visible: parent.hovered; delay: 500; text: "Remove .disabled suffix for all assets in this category." }
                                                 }
 
                                                 FluButton {
@@ -470,6 +510,7 @@ Item {
                                                             win.showSuccess("Bulk disable complete", 2200, "Updated: " + count)
                                                         }
                                                     }
+                                                    FluTooltip { visible: parent.hovered; delay: 500; text: "Append .disabled suffix for all assets in this category." }
                                                 }
 
                                                 FluButton {
@@ -482,6 +523,7 @@ Item {
                                                             win.showSuccess("Disabled assets removed", 2200, "Removed: " + count)
                                                         }
                                                     }
+                                                    FluTooltip { visible: parent.hovered; delay: 500; text: "Delete all files ending with .disabled in this category." }
                                                 }
 
                                                 FluFilledButton {
@@ -494,6 +536,7 @@ Item {
                                                             win.showSuccess("Assets cleared", 2200, "Removed: " + count)
                                                         }
                                                     }
+                                                    FluTooltip { visible: parent.hovered; delay: 500; text: "Remove all assets from current tab folder." }
                                                 }
                                             }
 
