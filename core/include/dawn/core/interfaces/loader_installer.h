@@ -1,6 +1,7 @@
 #pragma once
 
 #include "dawn/core/model/content_types.h"
+#include "dawn/core/model/task_types.h"
 
 namespace dawn::core {
 

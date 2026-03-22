@@ -6,6 +6,7 @@
 
 #include <gtest/gtest.h>
 
+#include <chrono>
 #include <algorithm>
 #include <filesystem>
 
@@ -144,6 +145,93 @@ TEST(DownloadService, ResumesPartialDownloadsWithRangeHeader) {
     std::filesystem::remove_all(root);
 }
 
+TEST(DownloadService, DownloadsFileInSequentialChunks) {
+    auto client = std::make_shared<dawn::infra::net::FakeHttpClient>();
+    client->push_response(dawn::infra::net::HttpResponse{206, {{"Content-Range", "bytes 0-3/11"}}, "hell"});
+    client->push_response(dawn::infra::net::HttpResponse{206, {{"Content-Range", "bytes 4-7/11"}}, "o wo"});
+    client->push_response(dawn::infra::net::HttpResponse{206, {{"Content-Range", "bytes 8-10/11"}}, "rld"});
+
+    const std::vector<std::string> expectedRanges = {"bytes=0-3", "bytes=4-7", "bytes=8-10"};
+    std::size_t requestIndex = 0;
+    client->set_request_validator([&](const dawn::infra::net::HttpRequest& request) -> std::optional<std::string> {
+        if (requestIndex >= expectedRanges.size()) {
+            return std::string("unexpected extra request");
+        }
+        const auto it = request.headers.find("Range");
+        if (it == request.headers.end()) {
+            return std::string("missing Range header");
+        }
+        if (it->second != expectedRanges[requestIndex]) {
+            return std::string("unexpected Range header: " + it->second);
+        }
+        ++requestIndex;
+        return std::nullopt;
+    });
+
+    const auto root = std::filesystem::temp_directory_path() / "dawn-download-chunks";
+    std::filesystem::remove_all(root);
+    const auto destination = root / "artifact.bin";
+
+    DownloadService service(client);
+    DownloadRequest request;
+    request.id = "download-chunked";
+    request.title = "Chunked Artifact";
+    request.url = "https://example.invalid/artifact.bin";
+    request.destination = destination;
+    request.chunkSizeBytes = 4;
+    request.expectedHash = dawn::infra::hash::sha256_hex("hello world");
+
+    const auto result = service.execute(request);
+
+    EXPECT_TRUE(result.success);
+    EXPECT_EQ(result.state, DownloadState::Completed);
+    EXPECT_EQ(result.chunks.size(), 3u);
+    EXPECT_TRUE(client->validation_errors().empty());
+    EXPECT_EQ(read_file(destination), "hello world");
+    EXPECT_EQ(result.artifact.bytesWritten, std::string("hello world").size());
+    EXPECT_EQ(result.chunks.front().chunk.index, 0u);
+    EXPECT_EQ(result.chunks.back().chunk.index, 2u);
+
+    std::filesystem::remove_all(root);
+}
+
+TEST(DownloadService, ThrottlesChunkDownloadsUsingConfiguredRate) {
+    auto client = std::make_shared<dawn::infra::net::FakeHttpClient>();
+    client->push_response(dawn::infra::net::HttpResponse{206, {{"Content-Range", "bytes 0-1/6"}}, "ab"});
+    client->push_response(dawn::infra::net::HttpResponse{206, {{"Content-Range", "bytes 2-3/6"}}, "cd"});
+    client->push_response(dawn::infra::net::HttpResponse{206, {{"Content-Range", "bytes 4-5/6"}}, "ef"});
+
+    const auto root = std::filesystem::temp_directory_path() / "dawn-download-throttle";
+    std::filesystem::remove_all(root);
+    const auto destination = root / "artifact.bin";
+
+    std::vector<std::chrono::milliseconds> sleeps;
+    DownloadService service(client);
+    service.set_bytes_per_second(2);
+    service.set_sleeper([&](std::chrono::milliseconds duration) {
+        sleeps.push_back(duration);
+    });
+
+    DownloadRequest request;
+    request.id = "download-throttle";
+    request.title = "Throttle Artifact";
+    request.url = "https://example.invalid/artifact.bin";
+    request.destination = destination;
+    request.chunkSizeBytes = 2;
+    request.expectedHash = dawn::infra::hash::sha256_hex("abcdef");
+
+    const auto result = service.execute(request);
+
+    EXPECT_TRUE(result.success);
+    ASSERT_EQ(sleeps.size(), 3u);
+    EXPECT_EQ(sleeps[0], std::chrono::milliseconds(1000));
+    EXPECT_EQ(sleeps[1], std::chrono::milliseconds(1000));
+    EXPECT_EQ(sleeps[2], std::chrono::milliseconds(1000));
+    EXPECT_EQ(read_file(destination), "abcdef");
+
+    std::filesystem::remove_all(root);
+}
+
 TEST(DownloadService, FallsBackToMirrorAfterPrimaryFailure) {
     auto client = std::make_shared<dawn::infra::net::FakeHttpClient>();
     client->push_response(dawn::infra::net::HttpResponse{500, {}, "primary failure"});
@@ -205,9 +293,9 @@ TEST(DownloadService, ExecutesBatchDownloadsConcurrently) {
 
     ASSERT_EQ(batch.results.size(), 3u);
     for (std::size_t index = 0; index < batch.results.size(); ++index) {
-        EXPECT_TRUE(batch.results[index].success);
-        EXPECT_TRUE(std::filesystem::exists(requests[index].destination));
-        EXPECT_EQ(read_file(requests[index].destination), "payload-" + std::to_string(index + 1));
+        EXPECT_TRUE(batch.results[index].success) << batch.results[index].error;
+        EXPECT_TRUE(std::filesystem::exists(requests[index].destination)) << batch.results[index].error;
+        EXPECT_EQ(read_file(requests[index].destination), "payload-" + std::to_string(index + 1)) << batch.results[index].error;
     }
     ASSERT_EQ(queue.tasks().size(), 3u);
     for (const auto& task : queue.tasks()) {
@@ -260,9 +348,9 @@ TEST(DownloadService, BatchFailureDoesNotBlockOtherTasks) {
     const auto batch = service.execute_many(requests, &queue);
 
     ASSERT_EQ(batch.results.size(), 3u);
-    EXPECT_TRUE(batch.results[0].success);
+    EXPECT_TRUE(batch.results[0].success) << batch.results[0].error;
     EXPECT_FALSE(batch.results[1].success);
-    EXPECT_TRUE(batch.results[2].success);
+    EXPECT_TRUE(batch.results[2].success) << batch.results[2].error;
     EXPECT_TRUE(std::filesystem::exists(requests[0].destination));
     EXPECT_FALSE(std::filesystem::exists(requests[1].destination));
     EXPECT_TRUE(std::filesystem::exists(requests[2].destination));

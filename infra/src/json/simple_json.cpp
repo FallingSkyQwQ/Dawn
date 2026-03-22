@@ -21,7 +21,8 @@ public:
         }
         skip_whitespace();
         if (!at_end()) {
-            return fail("unexpected trailing characters");
+            fail("unexpected trailing characters");
+            return result_;
         }
         result_.ok = true;
         result_.value = std::move(value);

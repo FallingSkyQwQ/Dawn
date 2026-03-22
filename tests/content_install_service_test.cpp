@@ -166,6 +166,48 @@ TEST(ContentInstallService, RoutesResourcepackAndShaderToTargetDirectories) {
     std::filesystem::remove_all(root);
 }
 
+TEST(ContentInstallService, RollsBackTargetFilesWhenLockWriteFails) {
+    const auto root = std::filesystem::temp_directory_path() / "dawn-content-install-rollback";
+    std::filesystem::remove_all(root);
+
+    auto instance = create_instance(root, "Rollback Instance");
+    FixedContentProvider provider;
+    ContentVersion version;
+    version.versionId = "1.0.0";
+    version.fileUrls = {"https://example.invalid/mod.jar"};
+    provider.versions_ = {version};
+
+    DownloadService downloadService(make_http_client("mod payload"));
+    ContentInstallService service(root, downloadService);
+
+    const auto lockParent = std::filesystem::path(instance.gameDir) / "config" / "dawn" / "content-locks" / "modrinth";
+    std::string error;
+    ASSERT_TRUE(dawn::infra::fs::write_binary_file(lockParent, "blocked", &error)) << error;
+
+    InstallRequest request;
+    request.provider = "modrinth";
+    request.instanceId = instance.id;
+    request.projectId = "rollback-mod";
+    request.versionId = "1.0.0";
+    request.projectType = ProjectType::Mod;
+
+    const auto result = service.install(request, provider, nullptr);
+
+    EXPECT_FALSE(result.success);
+    EXPECT_EQ(result.status, ContentInstallStatus::Failed);
+    EXPECT_FALSE(result.downloadResult.artifact.destination.empty());
+    EXPECT_FALSE(std::filesystem::exists(result.downloadResult.artifact.destination));
+    EXPECT_FALSE(result.deployedPath.empty());
+    EXPECT_FALSE(std::filesystem::exists(result.deployedPath));
+    EXPECT_FALSE(result.lockPath.empty());
+    EXPECT_FALSE(std::filesystem::exists(result.lockPath));
+    EXPECT_TRUE(std::any_of(result.logs.begin(), result.logs.end(), [](const std::string& log) {
+        return log.find("rollback:") != std::string::npos;
+    }));
+
+    std::filesystem::remove_all(root);
+}
+
 TEST(ContentInstallService, ReportsModpackCreateInstanceRequired) {
     const auto root = std::filesystem::temp_directory_path() / "dawn-content-install-modpack";
     std::filesystem::remove_all(root);

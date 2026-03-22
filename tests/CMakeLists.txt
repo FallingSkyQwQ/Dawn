@@ -1,6 +1,16 @@
 find_package(GTest QUIET)
 
-if(GTest_FOUND)
+if(NOT TARGET GTest::gtest)
+    include(FetchContent)
+    set(gtest_force_shared_crt ON CACHE BOOL "Use shared CRT for GoogleTest" FORCE)
+    FetchContent_Declare(
+        googletest
+        URL https://github.com/google/googletest/archive/refs/tags/v1.16.0.zip
+    )
+    FetchContent_MakeAvailable(googletest)
+endif()
+
+if(TARGET GTest::gtest)
     add_executable(dawn_tests)
 
     target_sources(dawn_tests
@@ -30,5 +40,5 @@ if(GTest_FOUND)
 
     add_test(NAME dawn_tests COMMAND dawn_tests)
 else()
-    message(WARNING "GoogleTest was not found. Dawn test targets are skipped.")
+    message(FATAL_ERROR "GoogleTest could not be configured.")
 endif()

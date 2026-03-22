@@ -103,7 +103,7 @@ std::string facets_to_query_value(const SearchQuery& query) {
     if (facets.empty()) {
         return {};
     }
-    return dawn::infra::net::url_encode(dawn::infra::json::stringify(Value(std::move(facets)), 0));
+    return dawn::infra::json::stringify(Value(std::move(facets)), 0);
 }
 
 std::string array_query_value(const std::vector<std::string>& values) {
@@ -112,7 +112,7 @@ std::string array_query_value(const std::vector<std::string>& values) {
     for (const auto& value : values) {
         array.emplace_back(value);
     }
-    return dawn::infra::net::url_encode(dawn::infra::json::stringify(Value(std::move(array)), 0));
+    return dawn::infra::json::stringify(Value(std::move(array)), 0);
 }
 
 SearchResult fallback_search_result(const SearchQuery& query) {
