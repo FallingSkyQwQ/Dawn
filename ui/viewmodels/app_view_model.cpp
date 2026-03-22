@@ -8,6 +8,7 @@
 #include <algorithm>
 #include <cstdint>
 #include <filesystem>
+#include <iterator>
 #include <QDateTime>
 #include <memory>
 #include <system_error>
@@ -120,6 +121,50 @@ QString content_install_status_text(dawn::core::ContentInstallStatus status) {
 
 QString current_timestamp_text() {
     return QDateTime::currentDateTimeUtc().toString(Qt::ISODateWithMs);
+}
+
+QString normalize_event_type(const QString& type, const QString& sourceType) {
+    const auto normalizedType = type.trimmed().toLower();
+    const auto normalizedSource = sourceType.trimmed().toLower();
+    if (normalizedSource == QStringLiteral("diagnostic") || normalizedType == QStringLiteral("diagnostic")) {
+        return QStringLiteral("diagnostic");
+    }
+    if (normalizedSource == QStringLiteral("repair") || normalizedType == QStringLiteral("repair")) {
+        return QStringLiteral("repair");
+    }
+    if (normalizedSource == QStringLiteral("remote_content") || normalizedType.contains(QStringLiteral("download")) || normalizedType.contains(QStringLiteral("remote"))) {
+        return QStringLiteral("download");
+    }
+    if (normalizedSource == QStringLiteral("local_drop") || normalizedType.contains(QStringLiteral("drag")) || normalizedType.contains(QStringLiteral("install"))) {
+        return QStringLiteral("install");
+    }
+    return QStringLiteral("install");
+}
+
+QString page_hint_for_event(const QString& eventType, const QString& targetInstanceId, const QString& projectId) {
+    if (!projectId.isEmpty() || eventType == QStringLiteral("download")) {
+        return QStringLiteral("content");
+    }
+    if (!targetInstanceId.isEmpty()) {
+        return QStringLiteral("instances");
+    }
+    if (eventType == QStringLiteral("diagnostic") || eventType == QStringLiteral("repair")) {
+        return QStringLiteral("logs");
+    }
+    return QStringLiteral("logs");
+}
+
+int page_index_for_hint(const QString& pageHint) {
+    if (pageHint == QStringLiteral("instances")) {
+        return 1;
+    }
+    if (pageHint == QStringLiteral("content")) {
+        return 2;
+    }
+    if (pageHint == QStringLiteral("logs")) {
+        return 4;
+    }
+    return -1;
 }
 
 } // namespace
@@ -268,12 +313,48 @@ QVariantList AppViewModel::installLogs() const {
     return logs;
 }
 
+QVariantList AppViewModel::eventCenter() const {
+    QVariantList logs;
+    for (auto it = installLogs_.rbegin(); it != installLogs_.rend(); ++it) {
+        const auto& entry = *it;
+        const auto statusFilter = installLogFilter_.toLower();
+        const auto sourceFilter = installLogSourceFilter_.toLower();
+        const auto typeFilter = eventCenterTypeFilter_.toLower();
+        if (statusFilter == QStringLiteral("success") && !entry.success) {
+            continue;
+        }
+        if (statusFilter == QStringLiteral("failure") && entry.success) {
+            continue;
+        }
+        if (sourceFilter != QStringLiteral("all") && entry.sourceType.toLower() != sourceFilter) {
+            continue;
+        }
+        if (typeFilter != QStringLiteral("all") && entry.eventType.toLower() != typeFilter) {
+            continue;
+        }
+        logs.push_back(installLogToVariant(entry));
+    }
+    return logs;
+}
+
 QString AppViewModel::installLogFilter() const {
     return installLogFilter_;
 }
 
 QString AppViewModel::installLogSourceFilter() const {
     return installLogSourceFilter_;
+}
+
+QString AppViewModel::eventCenterTypeFilter() const {
+    return eventCenterTypeFilter_;
+}
+
+QVariantMap AppViewModel::selectedEventContext() const {
+    return selectedEventContext_;
+}
+
+QString AppViewModel::selectedEventId() const {
+    return selectedEventId_;
 }
 
 QVariantList AppViewModel::repairExecutionLogs() const {
@@ -471,7 +552,7 @@ bool AppViewModel::searchContent(const QString& text, const QString& projectType
         contentVersions_.clear();
         selectedContentProjectId_.clear();
         selectedContentVersionId_.clear();
-        refreshInstallPreview();
+        refreshInstallPreview(false);
     }
     emit dataChanged();
     return !contentSearchResults_.empty();
@@ -502,7 +583,7 @@ bool AppViewModel::selectTargetInstance(const QString& instanceId) {
         return false;
     }
     setActiveInstance(instanceId);
-    refreshInstallPreview();
+    refreshInstallPreview(false);
     return true;
 }
 
@@ -539,7 +620,7 @@ bool AppViewModel::installSelectedContent() {
     rollbackEvents_ = result.rollbackEvents;
     repairExecutionLogs_ = result.logs;
     if (result.success) {
-        refreshInstallPreview();
+        refreshInstallPreview(false);
     }
 
     recordInstallLog(
@@ -548,12 +629,18 @@ bool AppViewModel::installSelectedContent() {
         to_qstring(request->instanceId),
         result.success,
         contentInstallStatus_,
-        result.success ? QStringLiteral("success") : QStringLiteral("failed"));
+        result.success ? QStringLiteral("success") : QStringLiteral("failed"),
+        selectedContentProjectId_,
+        selectedContentVersionId_);
     emit dataChanged();
     return result.success;
 }
 
 void AppViewModel::refreshInstallPreview() {
+    refreshInstallPreview(true);
+}
+
+void AppViewModel::refreshInstallPreview(bool recordDiagnosticEvent) {
     installDiagnostics_.clear();
     rollbackEvents_.clear();
     repairExecutionLogs_.clear();
@@ -601,6 +688,17 @@ void AppViewModel::refreshInstallPreview() {
     } else {
         installPreviewStatus_ = QStringLiteral("Install preview ready");
     }
+    if (recordDiagnosticEvent && (installPreview_.blocked || !installDiagnostics_.empty())) {
+        recordInstallLog(
+            QStringLiteral("diagnostic"),
+            QStringLiteral("diagnostic"),
+            selectedTargetInstanceId(),
+            !installPreview_.blocked,
+            installPreviewStatus_,
+            installPreview_.blocked ? QStringLiteral("blocked") : QStringLiteral("ready"),
+            selectedContentProjectId_,
+            selectedContentVersionId_);
+    }
     emit dataChanged();
 }
 
@@ -622,6 +720,53 @@ void AppViewModel::setInstallLogSourceFilter(const QString& filter) {
     }
     installLogSourceFilter_ = next;
     emit dataChanged();
+}
+
+void AppViewModel::setEventCenterTypeFilter(const QString& filter) {
+    const auto normalized = filter.trimmed().toLower();
+    const auto next = normalized.isEmpty() ? QStringLiteral("all") : normalized;
+    if (eventCenterTypeFilter_ == next) {
+        return;
+    }
+    eventCenterTypeFilter_ = next;
+    emit dataChanged();
+}
+
+bool AppViewModel::selectEvent(const QString& eventId) {
+    const auto requested = eventId.trimmed();
+    if (requested.isEmpty()) {
+        return false;
+    }
+
+    const auto it = std::find_if(installLogs_.rbegin(), installLogs_.rend(), [&](const InstallLogEntry& entry) {
+        return entry.eventId == requested;
+    });
+    if (it == installLogs_.rend()) {
+        return false;
+    }
+
+    const auto selectedIndex = static_cast<std::size_t>(std::distance(it, installLogs_.rend())) - 1;
+    for (auto& entry : installLogs_) {
+        entry.selected = entry.eventId == requested;
+    }
+
+    const auto& entry = installLogs_[selectedIndex];
+    selectedEventId_ = entry.eventId;
+    selectedEventContext_ = eventCenterContextToVariant(entry);
+
+    if (!entry.targetInstanceId.isEmpty()) {
+        setActiveInstance(entry.targetInstanceId);
+    }
+    if (!entry.projectId.isEmpty()) {
+        selectedContentProjectId_ = entry.projectId;
+        selectedContentVersionId_ = entry.versionId;
+        refreshSelectedContentVersions();
+    }
+    if (!entry.pageHint.isEmpty()) {
+        emit navigateToPageRequested(entry.pageIndex);
+    }
+    emit dataChanged();
+    return true;
 }
 
 bool AppViewModel::nextWizardStep() {
@@ -698,7 +843,7 @@ bool AppViewModel::executeRepairPlan(int planIndex) {
         repairExecutionLogs_.push_back(log);
     }
     if (result.success) {
-        refreshInstallPreview();
+        refreshInstallPreview(false);
         repairExecutionLogs_.clear();
         for (const auto& log : logs) {
             repairExecutionLogs_.push_back(log);
@@ -713,7 +858,9 @@ bool AppViewModel::executeRepairPlan(int planIndex) {
         to_qstring(request->instanceId),
         result.success,
         repairExecutionStatus_,
-        result.success ? QStringLiteral("success") : QStringLiteral("failed"));
+        result.success ? QStringLiteral("success") : QStringLiteral("failed"),
+        selectedContentProjectId_,
+        selectedContentVersionId_);
     emit dataChanged();
     return result.success;
 }
@@ -851,7 +998,7 @@ bool AppViewModel::clearCache() {
 }
 
 void AppViewModel::updateSelectedContentPreview() {
-    refreshInstallPreview();
+    refreshInstallPreview(false);
 }
 
 void AppViewModel::refreshSelectedContentVersions() {
@@ -904,15 +1051,21 @@ void AppViewModel::refreshDiskStatus() {
     }
 }
 
-void AppViewModel::recordInstallLog(const QString& type, const QString& sourceType, const QString& targetInstanceId, bool success, const QString& summary, const QString& result) {
+void AppViewModel::recordInstallLog(const QString& type, const QString& sourceType, const QString& targetInstanceId, bool success, const QString& summary, const QString& result, const QString& projectId, const QString& versionId) {
     InstallLogEntry entry;
+    entry.eventId = QStringLiteral("event-%1-%2").arg(current_timestamp_text()).arg(++eventSequence_);
+    entry.eventType = normalize_event_type(type, sourceType);
     entry.time = current_timestamp_text();
     entry.type = type;
     entry.sourceType = sourceType;
     entry.targetInstanceId = targetInstanceId;
+    entry.projectId = projectId;
+    entry.versionId = versionId;
     entry.success = success;
     entry.summary = summary;
     entry.result = result.isEmpty() ? (success ? QStringLiteral("success") : QStringLiteral("failure")) : result;
+    entry.pageHint = page_hint_for_event(entry.eventType, targetInstanceId, projectId);
+    entry.pageIndex = page_index_for_hint(entry.pageHint);
 
     installLogs_.push_back(std::move(entry));
     constexpr std::size_t kMaxInstallLogs = 30;
@@ -966,7 +1119,7 @@ void AppViewModel::setActiveInstance(const QString& instanceId) {
     }
     activeInstanceId_ = instanceId;
     activeInstanceTabId_ = QStringLiteral("overview");
-    refreshInstallPreview();
+    refreshInstallPreview(false);
     emit dataChanged();
 }
 
@@ -987,7 +1140,7 @@ void AppViewModel::refresh() {
         activeInstanceId_ = to_qstring(instances_.front().id);
         activeInstanceTabId_ = QStringLiteral("overview");
     }
-    refreshInstallPreview();
+    refreshInstallPreview(false);
     refreshDiskStatus();
     emit dataChanged();
 }
@@ -1159,13 +1312,41 @@ QVariantMap AppViewModel::rollbackEventToVariant(const dawn::core::ContentInstal
 
 QVariantMap AppViewModel::installLogToVariant(const InstallLogEntry& entry) const {
     return QVariantMap{
+        {"eventId", entry.eventId},
+        {"eventType", entry.eventType},
+        {"instanceId", entry.targetInstanceId},
         {"time", entry.time},
         {"type", entry.type},
         {"sourceType", entry.sourceType},
         {"targetInstanceId", entry.targetInstanceId},
+        {"projectId", entry.projectId},
+        {"versionId", entry.versionId},
         {"result", entry.result},
         {"summary", entry.summary},
+        {"pageHint", entry.pageHint},
+        {"pageIndex", entry.pageIndex},
         {"success", entry.success},
+        {"selected", entry.selected},
+    };
+}
+
+QVariantMap AppViewModel::eventCenterContextToVariant(const InstallLogEntry& entry) const {
+    return QVariantMap{
+        {"eventId", entry.eventId},
+        {"eventType", entry.eventType},
+        {"type", entry.type},
+        {"sourceType", entry.sourceType},
+        {"instanceId", entry.targetInstanceId},
+        {"targetInstanceId", entry.targetInstanceId},
+        {"projectId", entry.projectId},
+        {"versionId", entry.versionId},
+        {"status", entry.result},
+        {"time", entry.time},
+        {"summary", entry.summary},
+        {"pageHint", entry.pageHint},
+        {"pageIndex", entry.pageIndex},
+        {"success", entry.success},
+        {"selected", entry.selected},
     };
 }
 

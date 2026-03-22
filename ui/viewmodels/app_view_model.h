@@ -41,6 +41,10 @@ class AppViewModel final : public QObject {
     Q_PROPERTY(QVariantList installLogs READ installLogs NOTIFY dataChanged)
     Q_PROPERTY(QString installLogFilter READ installLogFilter WRITE setInstallLogFilter NOTIFY dataChanged)
     Q_PROPERTY(QString installLogSourceFilter READ installLogSourceFilter WRITE setInstallLogSourceFilter NOTIFY dataChanged)
+    Q_PROPERTY(QVariantList eventCenter READ eventCenter NOTIFY dataChanged)
+    Q_PROPERTY(QString eventCenterTypeFilter READ eventCenterTypeFilter WRITE setEventCenterTypeFilter NOTIFY dataChanged)
+    Q_PROPERTY(QVariantMap selectedEventContext READ selectedEventContext NOTIFY dataChanged)
+    Q_PROPERTY(QString selectedEventId READ selectedEventId NOTIFY dataChanged)
     Q_PROPERTY(QVariantList repairExecutionLogs READ repairExecutionLogs NOTIFY dataChanged)
     Q_PROPERTY(QString contentInstallStatus READ contentInstallStatus NOTIFY dataChanged)
     Q_PROPERTY(QVariantMap lastDroppedFileResult READ lastDroppedFileResult NOTIFY dataChanged)
@@ -85,6 +89,10 @@ public:
     [[nodiscard]] QVariantList installLogs() const;
     [[nodiscard]] QString installLogFilter() const;
     [[nodiscard]] QString installLogSourceFilter() const;
+    [[nodiscard]] QVariantList eventCenter() const;
+    [[nodiscard]] QString eventCenterTypeFilter() const;
+    [[nodiscard]] QVariantMap selectedEventContext() const;
+    [[nodiscard]] QString selectedEventId() const;
     [[nodiscard]] QVariantList repairExecutionLogs() const;
     [[nodiscard]] QString contentInstallStatus() const;
     [[nodiscard]] QVariantMap lastDroppedFileResult() const;
@@ -127,6 +135,8 @@ public:
     Q_INVOKABLE bool completeFirstLaunch();
     Q_INVOKABLE void setInstallLogFilter(const QString& filter);
     Q_INVOKABLE void setInstallLogSourceFilter(const QString& filter);
+    Q_INVOKABLE void setEventCenterTypeFilter(const QString& filter);
+    Q_INVOKABLE bool selectEvent(const QString& eventId);
     Q_INVOKABLE QVariantMap handleDroppedFile(const QString& path, const QString& instanceId);
     Q_INVOKABLE void setUiMode(const QString& mode);
     Q_INVOKABLE void setJavaStrategy(const QString& strategy);
@@ -139,6 +149,7 @@ public:
 
 signals:
     void dataChanged();
+    void navigateToPageRequested(int pageIndex);
 
 private:
     struct InstallLogEntry;
@@ -155,6 +166,7 @@ private:
     [[nodiscard]] QVariantMap diagnosticToVariant(const dawn::core::InstallDiagnostic& diagnostic) const;
     [[nodiscard]] QVariantMap rollbackEventToVariant(const dawn::core::ContentInstallResult::RollbackEvent& event) const;
     [[nodiscard]] QVariantMap installLogToVariant(const InstallLogEntry& entry) const;
+    [[nodiscard]] QVariantMap eventCenterContextToVariant(const InstallLogEntry& entry) const;
     [[nodiscard]] QVariantMap diskStatusToVariant(const dawn::core::DiskSpaceCheckResult& result) const;
     [[nodiscard]] QVariantMap cacheCleanupToVariant(const dawn::core::CacheCleanupResult& result) const;
     [[nodiscard]] std::size_t resourceCount(const dawn::core::InstanceManifest& manifest) const;
@@ -164,9 +176,10 @@ private:
     void persistSettings();
     void refreshDiskStatus();
     void updateSelectedContentPreview();
+    void refreshInstallPreview(bool recordDiagnosticEvent);
     void refreshSelectedContentVersions();
     void populateSearchResults(const dawn::core::SearchResult& result);
-    void recordInstallLog(const QString& type, const QString& sourceType, const QString& targetInstanceId, bool success, const QString& summary, const QString& result = QString());
+    void recordInstallLog(const QString& type, const QString& sourceType, const QString& targetInstanceId, bool success, const QString& summary, const QString& result = QString(), const QString& projectId = QString(), const QString& versionId = QString());
 
     QString dataRoot_;
     dawn::core::SettingsService settingsService_;
@@ -185,17 +198,28 @@ private:
     std::vector<dawn::core::InstallDiagnostic> installDiagnostics_;
     std::vector<dawn::core::ContentInstallResult::RollbackEvent> rollbackEvents_;
     struct InstallLogEntry {
+        QString eventId;
+        QString eventType;
         QString time;
         QString type;
         QString sourceType;
         QString targetInstanceId;
+        QString projectId;
+        QString versionId;
         QString result;
         QString summary;
+        QString pageHint;
+        int pageIndex = -1;
         bool success = false;
+        bool selected = false;
     };
     std::vector<InstallLogEntry> installLogs_;
     QString installLogFilter_ = QStringLiteral("all");
     QString installLogSourceFilter_ = QStringLiteral("all");
+    QString eventCenterTypeFilter_ = QStringLiteral("all");
+    QString selectedEventId_;
+    QVariantMap selectedEventContext_;
+    quint64 eventSequence_ = 0;
     std::vector<std::string> repairExecutionLogs_;
     QString contentInstallStatus_ = QStringLiteral("No content install run");
     QVariantMap lastDroppedFileResult_;

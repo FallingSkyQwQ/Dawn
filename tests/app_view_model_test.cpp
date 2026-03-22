@@ -7,6 +7,7 @@
 
 #include <gtest/gtest.h>
 
+#include <algorithm>
 #include <filesystem>
 #include <map>
 #include <memory>
@@ -396,6 +397,109 @@ TEST(AppViewModel, InstallLogsClassifySourcesAndCombineFilters) {
     filtered = viewModel.installLogs();
     ASSERT_EQ(filtered.size(), 1);
     EXPECT_EQ(filtered.front().toMap().value("sourceType").toString(), QStringLiteral("repair"));
+
+    std::filesystem::remove_all(root);
+}
+
+TEST(AppViewModel, EventCenterQueuesFiltersAndSelectsContext) {
+    const auto root = std::filesystem::temp_directory_path() / "dawn-app-view-model-event-center";
+    std::filesystem::remove_all(root);
+
+    auto provider = std::make_shared<PreviewContentProvider>();
+    provider->items_ = {
+        {
+            "event-project",
+            "Event Project",
+            "Selected for event center coverage",
+            "Dawn",
+            "",
+            "2026-03-22",
+            1500,
+            ProjectType::Mod,
+            {"1.20.1"},
+            {LoaderType::Fabric},
+        }
+    };
+
+    ContentVersion version;
+    version.versionId = "3.0.0";
+    version.name = "Event Build";
+    version.fileUrls = {"https://example.invalid/event-build.jar"};
+    version.loaders = {LoaderType::Fabric};
+    version.gameVersions = {"1.20.1"};
+    provider->versions_ = {version};
+    provider->versionMap_["event-project"] = {version};
+
+    auto client = std::make_shared<dawn::infra::net::FakeHttpClient>();
+    client->push_response(dawn::infra::net::HttpResponse{200, {}, "event build payload"});
+
+    AppViewModel viewModel(QString::fromStdString(root.string()), provider, client);
+
+    EXPECT_TRUE(viewModel.searchContent("event", "mod"));
+    EXPECT_TRUE(viewModel.selectSearchResult("event-project"));
+    EXPECT_TRUE(viewModel.selectInstallVersion("3.0.0"));
+    viewModel.refreshInstallPreview();
+
+    auto events = viewModel.eventCenter();
+    ASSERT_EQ(events.size(), 1);
+    EXPECT_EQ(events.front().toMap().value("eventType").toString(), QStringLiteral("diagnostic"));
+    EXPECT_EQ(events.front().toMap().value("pageHint").toString(), QStringLiteral("content"));
+
+    EXPECT_TRUE(viewModel.createInstance("Event Center Instance", "1.20.1", "fabric"));
+    const auto instanceId = viewModel.activeInstanceId();
+    EXPECT_FALSE(instanceId.isEmpty());
+
+    EXPECT_TRUE(viewModel.installSelectedContent());
+
+    const auto modPath = root / "drop" / "event-mod.jar";
+    std::string error;
+    ASSERT_TRUE(dawn::infra::fs::write_binary_file(modPath, "fabric.mod.json", &error)) << error;
+    const auto dropResult = viewModel.handleDroppedFile(
+        QString::fromStdString(modPath.string()),
+        instanceId);
+    EXPECT_TRUE(dropResult.value("success").toBool());
+
+    EXPECT_FALSE(viewModel.executeRepairPlan(QStringLiteral("missing")));
+
+    events = viewModel.eventCenter();
+    ASSERT_EQ(events.size(), 4);
+
+    viewModel.setEventCenterTypeFilter(QStringLiteral("download"));
+    auto filtered = viewModel.eventCenter();
+    ASSERT_EQ(filtered.size(), 1);
+    EXPECT_EQ(filtered.front().toMap().value("eventType").toString(), QStringLiteral("download"));
+    EXPECT_EQ(filtered.front().toMap().value("sourceType").toString(), QStringLiteral("remote_content"));
+
+    viewModel.setEventCenterTypeFilter(QStringLiteral("repair"));
+    filtered = viewModel.eventCenter();
+    ASSERT_EQ(filtered.size(), 1);
+    EXPECT_EQ(filtered.front().toMap().value("eventType").toString(), QStringLiteral("repair"));
+    EXPECT_EQ(filtered.front().toMap().value("sourceType").toString(), QStringLiteral("repair"));
+
+    viewModel.setEventCenterTypeFilter(QStringLiteral("all"));
+    viewModel.setInstallLogFilter(QStringLiteral("failure"));
+    filtered = viewModel.eventCenter();
+    ASSERT_EQ(filtered.size(), 2);
+    EXPECT_TRUE(std::all_of(filtered.begin(), filtered.end(), [](const QVariant& value) {
+        return !value.toMap().value("success").toBool();
+    }));
+
+    viewModel.setInstallLogFilter(QStringLiteral("all"));
+    viewModel.setEventCenterTypeFilter(QStringLiteral("download"));
+    events = viewModel.eventCenter();
+    ASSERT_EQ(events.size(), 1);
+    const auto selectedEventId = events.front().toMap().value("eventId").toString();
+    EXPECT_TRUE(viewModel.selectEvent(selectedEventId));
+    EXPECT_EQ(viewModel.selectedEventId(), selectedEventId);
+    EXPECT_EQ(viewModel.selectedEventContext().value("eventId").toString(), selectedEventId);
+    EXPECT_EQ(viewModel.selectedEventContext().value("eventType").toString(), QStringLiteral("download"));
+    EXPECT_EQ(viewModel.selectedEventContext().value("instanceId").toString(), instanceId);
+    EXPECT_EQ(viewModel.selectedEventContext().value("projectId").toString(), QStringLiteral("event-project"));
+    EXPECT_EQ(viewModel.selectedEventContext().value("versionId").toString(), QStringLiteral("3.0.0"));
+    EXPECT_EQ(viewModel.selectedEventContext().value("pageHint").toString(), QStringLiteral("content"));
+    EXPECT_EQ(viewModel.selectedContentProjectId(), QStringLiteral("event-project"));
+    EXPECT_EQ(viewModel.selectedContentVersionId(), QStringLiteral("3.0.0"));
+    EXPECT_EQ(viewModel.activeInstanceId(), instanceId);
 
     std::filesystem::remove_all(root);
 }

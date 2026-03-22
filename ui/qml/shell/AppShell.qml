@@ -11,6 +11,15 @@ Item {
 
     readonly property bool showWizard: root.appViewModel && root.appViewModel.firstLaunchVisible
 
+    Connections {
+        target: root.appViewModel
+        function onNavigateToPageRequested(pageIndex) {
+            if (pageIndex >= 0) {
+                root.currentIndex = pageIndex
+            }
+        }
+    }
+
     StackLayout {
         anchors.fill: parent
         currentIndex: root.showWizard ? 0 : 1
