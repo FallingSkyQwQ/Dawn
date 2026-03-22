@@ -53,6 +53,7 @@ struct DependencyGraph {
 };
 
 struct InstallRequest {
+    std::string provider = "modrinth";
     std::string instanceId;
     std::string projectId;
     std::string versionId;

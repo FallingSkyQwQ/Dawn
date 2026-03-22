@@ -76,6 +76,7 @@ The code is layered so that the core library can be tested without Qt.
 | Minecraft versions | scaffolded | Version classification and lookup are local stubs. |
 | Loaders | scaffolded | Fabric, Quilt, Forge, NeoForge, and OptiFine profiles are represented. |
 | Download queue | executable scaffold | Task queue, retrying file download, and checksum verification skeletons are present. |
+| Content install | executable scaffold | Mod/resourcepack/shader installs now resolve versions, download artifacts, deploy into instance folders, and write content locks. Modpack requests return `create instance required`. |
 | Diagnostics | scaffolded | Log rule matching returns human-readable categories. |
 | Backups | scaffolded | Snapshot metadata and restore plans are local stubs. |
 | Modrinth integration | protocol-adapter | Search/version URL builders and JSON parsing are wired; Windows uses WinHTTP, other platforms use fake transport. |
@@ -89,4 +90,5 @@ The code is layered so that the core library can be tested without Qt.
 * Real Minecraft runtime orchestration is still stubbed.
 * FluentUIbi integration is behind a CMake switch and falls back when the submodule is not present.
 * Download executor status: executable scaffold only; resume support, parallel transfer, and deeper corruption recovery are still pending.
+* Instance install chain status: mod, resourcepack, and shader installs now flow through version resolution, download, deployment, and content lock persistence. Modpack installs still stop at "create instance required".
 * Microsoft identity protocol coverage now reaches Minecraft profile, but end-to-end live account login still needs real-world integration testing against the platform services.

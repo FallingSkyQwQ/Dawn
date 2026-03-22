@@ -8,6 +8,7 @@ target_sources(dawn_core
         src/backup/backup_service.cpp
         src/diagnostics/diagnostics_service.cpp
         src/download/download_service.cpp
+        src/content/content_install_service.cpp
         src/java/java_service.cpp
         src/loaders/loader_service.cpp
         src/model/content_lock.cpp

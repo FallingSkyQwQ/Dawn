@@ -5,11 +5,12 @@ if(GTest_FOUND)
 
     target_sources(dawn_tests
         PRIVATE
-            account_token_state_test.cpp
-            backup_service_test.cpp
-            diagnostics_service_test.cpp
-            download_service_test.cpp
-            global_settings_test.cpp
+        account_token_state_test.cpp
+        backup_service_test.cpp
+        content_install_service_test.cpp
+        diagnostics_service_test.cpp
+        download_service_test.cpp
+        global_settings_test.cpp
             instance_manifest_test.cpp
             http_client_factory_test.cpp
             microsoft_identity_service_test.cpp
