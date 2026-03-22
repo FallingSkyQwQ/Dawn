@@ -70,6 +70,19 @@ private:
     [[nodiscard]] static std::filesystem::path staging_path_for(const InstanceManifest& instance, const InstallRequest& request, const ContentVersion& version);
     [[nodiscard]] static std::filesystem::path final_path_for(const InstanceManifest& instance, const InstallRequest& request, const ContentVersion& version);
     [[nodiscard]] static std::vector<std::string> merge_dependencies(const ContentVersion& version, const DependencyGraph& graph);
+    [[nodiscard]] static DependencyTreeNode build_dependency_tree(
+        const InstallRequest& request,
+        const ContentVersion& version,
+        const DependencyGraph& graph,
+        const std::vector<ContentLock>& installedLocks,
+        bool selectedVersionCompatible);
+    [[nodiscard]] static std::vector<VersionSuggestion> build_version_suggestions(
+        const InstallRequest& request,
+        const InstanceManifest& instance,
+        const std::vector<ContentVersion>& versions,
+        const ContentVersion& selectedVersion,
+        bool selectedVersionCompatible);
+    [[nodiscard]] static TaskPlan build_repair_plan(const InstallRequest& request, const DependencyCheckResult& preview);
     [[nodiscard]] static std::string provider_name(const InstallRequest& request);
 
     std::filesystem::path root_;

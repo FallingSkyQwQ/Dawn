@@ -73,13 +73,18 @@ public:
     DependencyGraph dependencyGraph_;
 };
 
-InstanceManifest create_instance(const std::filesystem::path& root, const std::string& name) {
+InstanceManifest create_instance(
+    const std::filesystem::path& root,
+    const std::string& name,
+    LoaderType loaderType = LoaderType::Fabric,
+    const std::string& mcVersion = "1.20.1",
+    const std::string& loaderVersion = "0.15.11") {
     InstanceService service(root);
     InstanceManifest manifest;
     manifest.name = name;
-    manifest.mcVersion = "1.20.1";
-    manifest.loaderType = LoaderType::Fabric;
-    manifest.loaderVersion = "0.15.11";
+    manifest.mcVersion = mcVersion;
+    manifest.loaderType = loaderType;
+    manifest.loaderVersion = loaderVersion;
     manifest.javaProfileId = "java-17";
     manifest.memoryProfile = "4G";
 
@@ -187,6 +192,11 @@ TEST(ContentInstallService, BlocksConflictingInstallAndExposesDiagnostics) {
 
     const auto preview = service.preview(request, provider);
     EXPECT_TRUE(preview.blocked);
+    EXPECT_FALSE(preview.versionSuggestions.empty());
+    EXPECT_TRUE(preview.repairPlanAvailable);
+    EXPECT_EQ(preview.repairPlan.steps.size(), 3u);
+    EXPECT_EQ(preview.dependencyTree.status, "blocked");
+    EXPECT_FALSE(preview.dependencyTree.children.empty());
     EXPECT_NE(std::find_if(preview.diagnostics.begin(), preview.diagnostics.end(), [](const InstallDiagnostic& diagnostic) {
         return diagnostic.code == "loader_incompatible";
     }), preview.diagnostics.end());
@@ -251,6 +261,99 @@ TEST(ContentInstallService, BlocksSameProjectDifferentVersionConflict) {
     EXPECT_TRUE(std::any_of(result.rollbackEvents.begin(), result.rollbackEvents.end(), [](const ContentInstallResult::RollbackEvent& event) {
         return event.action == "abort install";
     }));
+
+    std::filesystem::remove_all(root);
+}
+
+TEST(ContentInstallService, SuggestsCompatibleVersionsWhenCurrentSelectionConflicts) {
+    const auto root = std::filesystem::temp_directory_path() / "dawn-content-install-version-suggestions";
+    std::filesystem::remove_all(root);
+
+    auto instance = create_instance(root, "Suggestion Instance", LoaderType::Forge, "1.20.1", "47.2.0");
+
+    FixedContentProvider provider;
+
+    ContentVersion incompatible;
+    incompatible.versionId = "1.0.0";
+    incompatible.name = "Current Build";
+    incompatible.fileUrls = {"https://example.invalid/current.jar"};
+    incompatible.loaders = {LoaderType::Fabric};
+    incompatible.gameVersions = {"1.19.4"};
+
+    ContentVersion compatible;
+    compatible.versionId = "1.1.0";
+    compatible.name = "Compatible Build";
+    compatible.fileUrls = {"https://example.invalid/compatible.jar"};
+    compatible.loaders = {LoaderType::Forge};
+    compatible.gameVersions = {"1.20.1"};
+
+    provider.versions_ = {incompatible, compatible};
+
+    DownloadService downloadService(make_http_client("version payload"));
+    ContentInstallService service(root, downloadService);
+
+    InstallRequest request;
+    request.provider = "modrinth";
+    request.instanceId = instance.id;
+    request.projectId = "preview-mod";
+    request.versionId = "1.0.0";
+    request.projectType = ProjectType::Mod;
+
+    const auto preview = service.preview(request, provider);
+    EXPECT_TRUE(preview.blocked);
+    ASSERT_GE(preview.versionSuggestions.size(), 2u);
+    EXPECT_EQ(preview.versionSuggestions.front().versionId, "1.1.0");
+    EXPECT_TRUE(preview.versionSuggestions.front().recommended);
+    EXPECT_NE(std::find_if(preview.versionSuggestions.begin(), preview.versionSuggestions.end(), [](const VersionSuggestion& suggestion) {
+        return suggestion.versionId == "1.0.0" && !suggestion.reason.empty();
+    }), preview.versionSuggestions.end());
+    std::filesystem::remove_all(root);
+}
+
+TEST(ContentInstallService, CreatesRepairPlanForMissingRequiredDependencies) {
+    const auto root = std::filesystem::temp_directory_path() / "dawn-content-install-repair-plan";
+    std::filesystem::remove_all(root);
+
+    auto instance = create_instance(root, "Repair Plan Instance", LoaderType::Fabric, "1.20.1", "0.15.11");
+
+    FixedContentProvider provider;
+    ContentVersion version;
+    version.versionId = "2.0.0";
+    version.name = "Repairable Build";
+    version.fileUrls = {"https://example.invalid/repairable.jar"};
+    version.loaders = {LoaderType::Fabric};
+    version.gameVersions = {"1.20.1"};
+    version.dependencies = {
+        {"required-lib", {}, {}, DependencyRequirement::Required, "must exist"},
+        {"optional-lib", {}, {}, DependencyRequirement::Optional, "optional helper"},
+    };
+    provider.versions_ = {version};
+    provider.dependencyGraph_.dependencies = version.dependencies;
+
+    DownloadService downloadService(make_http_client("repair payload"));
+    ContentInstallService service(root, downloadService);
+
+    InstallRequest request;
+    request.provider = "modrinth";
+    request.instanceId = instance.id;
+    request.projectId = "repairable-mod";
+    request.versionId = "2.0.0";
+    request.projectType = ProjectType::Mod;
+
+    const auto preview = service.preview(request, provider);
+    EXPECT_TRUE(preview.blocked);
+    EXPECT_TRUE(preview.repairPlanAvailable);
+    ASSERT_EQ(preview.repairPlan.steps.size(), 3u);
+    EXPECT_EQ(preview.repairPlan.steps[0].id, "resolve");
+    EXPECT_EQ(preview.repairPlan.steps[1].id, "download");
+    EXPECT_EQ(preview.repairPlan.steps[2].id, "install");
+    ASSERT_FALSE(preview.dependencyTree.children.empty());
+    EXPECT_EQ(preview.dependencyTree.children.front().projectId, "required-lib");
+    EXPECT_EQ(preview.dependencyTree.children.front().status, "missing");
+    EXPECT_NE(preview.repairPlan.steps.front().detail.find("required-lib"), std::string::npos);
+    EXPECT_NE(std::find_if(preview.diagnostics.begin(), preview.diagnostics.end(), [](const InstallDiagnostic& diagnostic) {
+        return diagnostic.code == "missing_required_dependency";
+    }), preview.diagnostics.end());
 
     std::filesystem::remove_all(root);
 }

@@ -2,6 +2,7 @@
 
 #include "dawn/core/model/content_lock.h"
 #include "dawn/core/model/enums.h"
+#include "dawn/core/model/task_types.h"
 
 #include <cstddef>
 #include <string>
@@ -61,6 +62,24 @@ struct ContentVersion {
     std::vector<LoaderType> loaders;
 };
 
+struct DependencyTreeNode {
+    std::string projectId;
+    std::string versionId;
+    DependencyRequirement requirement = DependencyRequirement::Required;
+    std::string status;
+    std::string message;
+    std::vector<DependencyTreeNode> children;
+};
+
+struct VersionSuggestion {
+    std::string versionId;
+    std::string name;
+    std::string reason;
+    bool recommended = false;
+    std::vector<std::string> gameVersions;
+    std::vector<LoaderType> loaders;
+};
+
 struct DependencyGraph {
     std::vector<ContentDependency> dependencies;
     std::vector<ContentLock> locks;
@@ -80,6 +99,10 @@ struct InstallDiagnostic {
 struct DependencyCheckResult {
     bool blocked = false;
     DependencyGraph graph;
+    DependencyTreeNode dependencyTree;
+    std::vector<VersionSuggestion> versionSuggestions;
+    TaskPlan repairPlan;
+    bool repairPlanAvailable = false;
     std::vector<InstallDiagnostic> diagnostics;
 };
 

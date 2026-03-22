@@ -9,6 +9,7 @@
 #include "dawn/core/service/preflight_service.h"
 #include "dawn/core/service/task_queue.h"
 #include "dawn/core/download/download_service.h"
+#include "dawn/core/provider/modrinth_provider.h"
 
 #include <QObject>
 #include <QString>
@@ -17,6 +18,7 @@
 #include <QVariantMap>
 
 #include <cstddef>
+#include <memory>
 #include <vector>
 
 namespace dawn::ui {
@@ -25,12 +27,18 @@ class AppViewModel final : public QObject {
     Q_OBJECT
     Q_PROPERTY(QVariantList instanceCards READ instanceCards NOTIFY dataChanged)
     Q_PROPERTY(QVariantList taskCards READ taskCards NOTIFY dataChanged)
+    Q_PROPERTY(QVariantList contentSearchResults READ contentSearchResults NOTIFY dataChanged)
+    Q_PROPERTY(QVariantList contentVersions READ contentVersions NOTIFY dataChanged)
     Q_PROPERTY(QVariantList instanceWorkbenchTabs READ instanceWorkbenchTabs NOTIFY dataChanged)
     Q_PROPERTY(QVariantMap activeInstanceWorkbench READ activeInstanceWorkbench NOTIFY dataChanged)
     Q_PROPERTY(QVariantMap primaryPreflight READ primaryPreflight NOTIFY dataChanged)
+    Q_PROPERTY(QVariantMap installPreview READ installPreview NOTIFY dataChanged)
     Q_PROPERTY(QVariantList installDiagnostics READ installDiagnostics NOTIFY dataChanged)
     Q_PROPERTY(QVariantList rollbackEvents READ rollbackEvents NOTIFY dataChanged)
     Q_PROPERTY(QString installPreviewStatus READ installPreviewStatus NOTIFY dataChanged)
+    Q_PROPERTY(QString selectedContentProjectId READ selectedContentProjectId NOTIFY dataChanged)
+    Q_PROPERTY(QString selectedContentVersionId READ selectedContentVersionId NOTIFY dataChanged)
+    Q_PROPERTY(QString selectedTargetInstanceId READ selectedTargetInstanceId NOTIFY dataChanged)
     Q_PROPERTY(QString primaryInstanceId READ primaryInstanceId NOTIFY dataChanged)
     Q_PROPERTY(QString activeInstanceId READ activeInstanceId NOTIFY dataChanged)
     Q_PROPERTY(QString activeInstanceTabId READ activeInstanceTabId NOTIFY dataChanged)
@@ -40,15 +48,22 @@ class AppViewModel final : public QObject {
 
 public:
     explicit AppViewModel(QString dataRoot, QObject* parent = nullptr);
+    AppViewModel(QString dataRoot, std::shared_ptr<dawn::core::IContentProvider> contentProvider, QObject* parent = nullptr);
 
     [[nodiscard]] QVariantList instanceCards() const;
     [[nodiscard]] QVariantList taskCards() const;
+    [[nodiscard]] QVariantList contentSearchResults() const;
+    [[nodiscard]] QVariantList contentVersions() const;
     [[nodiscard]] QVariantList instanceWorkbenchTabs() const;
     [[nodiscard]] QVariantMap activeInstanceWorkbench() const;
     [[nodiscard]] QVariantMap primaryPreflight() const;
+    [[nodiscard]] QVariantMap installPreview() const;
     [[nodiscard]] QVariantList installDiagnostics() const;
     [[nodiscard]] QVariantList rollbackEvents() const;
     [[nodiscard]] QString installPreviewStatus() const;
+    [[nodiscard]] QString selectedContentProjectId() const;
+    [[nodiscard]] QString selectedContentVersionId() const;
+    [[nodiscard]] QString selectedTargetInstanceId() const;
     [[nodiscard]] QString primaryInstanceId() const;
     [[nodiscard]] QString activeInstanceId() const;
     [[nodiscard]] QString activeInstanceTabId() const;
@@ -58,6 +73,10 @@ public:
 
     Q_INVOKABLE bool createInstance(const QString& name, const QString& mcVersion, const QString& loaderType = QStringLiteral("none"));
     Q_INVOKABLE bool enqueueDemoTask(const QString& title);
+    Q_INVOKABLE bool searchContent(const QString& text, const QString& projectType = QStringLiteral("mod"));
+    Q_INVOKABLE bool selectSearchResult(const QString& projectId);
+    Q_INVOKABLE bool selectTargetInstance(const QString& instanceId);
+    Q_INVOKABLE bool selectInstallVersion(const QString& versionId);
     Q_INVOKABLE void refreshInstallPreview();
     Q_INVOKABLE QVariantMap preflightFor(const QString& instanceId) const;
     Q_INVOKABLE void setActiveInstance(const QString& instanceId);
@@ -70,12 +89,21 @@ signals:
 private:
     [[nodiscard]] QVariantMap instanceToVariant(const dawn::core::InstanceManifest& manifest) const;
     [[nodiscard]] QVariantMap taskToVariant(const dawn::core::TaskPlan& plan) const;
+    [[nodiscard]] QVariantMap stepToVariant(const dawn::core::TaskStep& step) const;
     [[nodiscard]] QVariantMap preflightToVariant(const dawn::core::PreflightResult& result) const;
     [[nodiscard]] QVariantMap workbenchToVariant(const dawn::core::InstanceWorkbenchState& workbench) const;
+    [[nodiscard]] QVariantMap contentSearchResultToVariant(const dawn::core::SearchResultItem& item) const;
+    [[nodiscard]] QVariantMap contentVersionToVariant(const dawn::core::ContentVersion& version) const;
+    [[nodiscard]] QVariantMap versionSuggestionToVariant(const dawn::core::VersionSuggestion& suggestion) const;
+    [[nodiscard]] QVariantMap dependencyTreeToVariant(const dawn::core::DependencyTreeNode& node) const;
+    [[nodiscard]] QVariantMap repairPlanToVariant(const dawn::core::TaskPlan& plan, bool available) const;
     [[nodiscard]] QVariantMap diagnosticToVariant(const dawn::core::InstallDiagnostic& diagnostic) const;
     [[nodiscard]] QVariantMap rollbackEventToVariant(const dawn::core::ContentInstallResult::RollbackEvent& event) const;
     [[nodiscard]] std::size_t resourceCount(const dawn::core::InstanceManifest& manifest) const;
     [[nodiscard]] std::size_t activeInstanceIndex() const;
+    void updateSelectedContentPreview();
+    void refreshSelectedContentVersions();
+    void populateSearchResults(const dawn::core::SearchResult& result);
 
     QString dataRoot_;
     dawn::core::InstanceService instanceService_;
@@ -83,9 +111,16 @@ private:
     dawn::core::TaskQueue taskQueue_;
     dawn::core::DownloadService previewDownloadService_;
     dawn::core::ContentInstallService contentInstallService_;
+    std::shared_ptr<dawn::core::IContentProvider> contentProvider_;
+    dawn::core::SearchQuery contentSearchQuery_;
+    std::vector<dawn::core::SearchResultItem> contentSearchResults_;
+    std::vector<dawn::core::ContentVersion> contentVersions_;
     std::vector<dawn::core::InstallDiagnostic> installDiagnostics_;
     std::vector<dawn::core::ContentInstallResult::RollbackEvent> rollbackEvents_;
+    dawn::core::DependencyCheckResult installPreview_;
     QString installPreviewStatus_ = QStringLiteral("No install preview run");
+    QString selectedContentProjectId_;
+    QString selectedContentVersionId_;
     std::vector<dawn::core::InstanceManifest> instances_;
     QString activeInstanceId_;
     QString activeInstanceTabId_ = QStringLiteral("overview");

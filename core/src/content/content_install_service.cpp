@@ -64,6 +64,65 @@ bool contains_loader(const std::vector<LoaderType>& loaders, LoaderType loader) 
     return std::find(loaders.begin(), loaders.end(), loader) != loaders.end();
 }
 
+bool has_game_version(const std::vector<std::string>& versions, const std::string& value) {
+    return std::find(versions.begin(), versions.end(), value) != versions.end();
+}
+
+std::string requirement_to_string(DependencyRequirement requirement) {
+    switch (requirement) {
+    case DependencyRequirement::Required: return "required";
+    case DependencyRequirement::Optional: return "optional";
+    case DependencyRequirement::Incompatible: return "incompatible";
+    case DependencyRequirement::Embedded: return "embedded";
+    }
+    return "required";
+}
+
+bool version_compatible_with_instance(const ContentVersion& version, const InstanceManifest& instance) {
+    const bool loaderSupported = version.loaders.empty()
+        || instance.loaderType == LoaderType::None
+        || contains_loader(version.loaders, instance.loaderType);
+    const bool versionSupported = version.gameVersions.empty()
+        || instance.mcVersion.empty()
+        || has_game_version(version.gameVersions, instance.mcVersion);
+    return loaderSupported && versionSupported;
+}
+
+std::string version_compatibility_reason(const ContentVersion& version, const InstanceManifest& instance) {
+    const bool loaderSupported = version.loaders.empty()
+        || instance.loaderType == LoaderType::None
+        || contains_loader(version.loaders, instance.loaderType);
+    const bool versionSupported = version.gameVersions.empty()
+        || instance.mcVersion.empty()
+        || has_game_version(version.gameVersions, instance.mcVersion);
+    if (loaderSupported && versionSupported) {
+        return "matches instance loader and game version";
+    }
+    if (!loaderSupported && !versionSupported) {
+        return "loader and game version do not match the target instance";
+    }
+    if (!loaderSupported) {
+        return "loader is not compatible with the target instance";
+    }
+    return "game version is not compatible with the target instance";
+}
+
+std::string dependency_status_from_requirement(DependencyRequirement requirement, bool installed, bool conflict) {
+    if (conflict) {
+        return "conflict";
+    }
+    if (installed) {
+        return "installed";
+    }
+    switch (requirement) {
+    case DependencyRequirement::Required: return "missing";
+    case DependencyRequirement::Optional: return "optional";
+    case DependencyRequirement::Incompatible: return "incompatible";
+    case DependencyRequirement::Embedded: return "embedded";
+    }
+    return "missing";
+}
+
 std::vector<ContentLock> collect_installed_locks(const InstanceManifest& instance) {
     std::vector<ContentLock> locks;
     const std::filesystem::path gameDir = instance.gameDir.empty()
@@ -283,6 +342,169 @@ std::vector<std::string> ContentInstallService::merge_dependencies(const Content
     return dependencies;
 }
 
+DependencyTreeNode ContentInstallService::build_dependency_tree(
+    const InstallRequest& request,
+    const ContentVersion& version,
+    const DependencyGraph& graph,
+    const std::vector<ContentLock>& installedLocks,
+    bool selectedVersionCompatible) {
+    DependencyTreeNode root;
+    root.projectId = request.projectId;
+    root.versionId = version.versionId;
+    root.requirement = DependencyRequirement::Required;
+    root.status = selectedVersionCompatible ? "ready" : "blocked";
+    root.message = version.name.empty() ? request.projectId : version.name;
+
+    const auto find_installed = [&](const std::string& projectId, std::string* versionId) {
+        for (const auto& lock : installedLocks) {
+            if (lock.projectId == projectId) {
+                if (versionId) {
+                    *versionId = lock.versionId;
+                }
+                return true;
+            }
+        }
+        return false;
+    };
+
+    const auto append_child = [&](const ContentDependency& dependency) {
+        std::string installedVersion;
+        const bool installed = find_installed(dependency.projectId, &installedVersion);
+        const bool conflict = dependency.requirement == DependencyRequirement::Incompatible && installed;
+        DependencyTreeNode child;
+        child.projectId = dependency.projectId;
+        child.versionId = installed ? installedVersion : dependency.versionId;
+        child.requirement = dependency.requirement;
+        child.status = dependency_status_from_requirement(dependency.requirement, installed, conflict);
+        child.message = dependency.note.empty() ? requirement_to_string(dependency.requirement) : dependency.note;
+        root.children.push_back(std::move(child));
+    };
+
+    for (const auto& dependency : graph.dependencies.empty() ? version.dependencies : graph.dependencies) {
+        append_child(dependency);
+    }
+
+    return root;
+}
+
+std::vector<VersionSuggestion> ContentInstallService::build_version_suggestions(
+    const InstallRequest& request,
+    const InstanceManifest& instance,
+    const std::vector<ContentVersion>& versions,
+    const ContentVersion& selectedVersion,
+    bool selectedVersionCompatible) {
+    (void)request;
+
+    struct Candidate {
+        VersionSuggestion suggestion;
+        int score = 0;
+    };
+
+    std::vector<Candidate> candidates;
+    candidates.reserve(versions.size());
+    for (const auto& version : versions) {
+        Candidate candidate;
+        candidate.suggestion.versionId = version.versionId;
+        candidate.suggestion.name = version.name.empty() ? version.versionId : version.name;
+        candidate.suggestion.gameVersions = version.gameVersions;
+        candidate.suggestion.loaders = version.loaders;
+        candidate.suggestion.recommended = false;
+
+        const bool loaderSupported = version.loaders.empty()
+            || instance.loaderType == LoaderType::None
+            || contains_loader(version.loaders, instance.loaderType);
+        const bool gameVersionSupported = version.gameVersions.empty()
+            || instance.mcVersion.empty()
+            || has_game_version(version.gameVersions, instance.mcVersion);
+
+        if (loaderSupported) {
+            candidate.score += 30;
+        }
+        if (gameVersionSupported) {
+            candidate.score += 30;
+        }
+        if (loaderSupported && gameVersionSupported) {
+            candidate.score += 40;
+        }
+        if (version.versionId == selectedVersion.versionId) {
+            candidate.score += selectedVersionCompatible ? 50 : 5;
+            candidate.suggestion.reason = selectedVersionCompatible
+                ? "current selection is compatible"
+                : "current selection needs adjustment";
+        } else if (loaderSupported && gameVersionSupported) {
+            candidate.suggestion.reason = "matches target loader and game version";
+        } else if (loaderSupported) {
+            candidate.suggestion.reason = "loader matches, game version needs a closer fit";
+        } else if (gameVersionSupported) {
+            candidate.suggestion.reason = "game version matches, loader needs a closer fit";
+        } else {
+            candidate.suggestion.reason = "no direct compatibility match";
+        }
+
+        if (candidate.score > 0) {
+            candidates.push_back(std::move(candidate));
+        }
+    }
+
+    if (candidates.empty()) {
+        VersionSuggestion suggestion;
+        suggestion.versionId = selectedVersion.versionId;
+        suggestion.name = selectedVersion.name.empty() ? selectedVersion.versionId : selectedVersion.name;
+        suggestion.reason = "no compatible version candidates found";
+        suggestion.recommended = true;
+        suggestion.gameVersions = selectedVersion.gameVersions;
+        suggestion.loaders = selectedVersion.loaders;
+        return {suggestion};
+    }
+
+    std::sort(candidates.begin(), candidates.end(), [](const Candidate& lhs, const Candidate& rhs) {
+        if (lhs.score != rhs.score) {
+            return lhs.score > rhs.score;
+        }
+        return lhs.suggestion.versionId < rhs.suggestion.versionId;
+    });
+
+    std::vector<VersionSuggestion> suggestions;
+    for (std::size_t i = 0; i < candidates.size() && i < 4; ++i) {
+        candidates[i].suggestion.recommended = i == 0;
+        suggestions.push_back(std::move(candidates[i].suggestion));
+    }
+
+    if (!selectedVersionCompatible && !selectedVersion.versionId.empty()) {
+        const auto it = std::find_if(suggestions.begin(), suggestions.end(), [&](const VersionSuggestion& suggestion) {
+            return suggestion.versionId == selectedVersion.versionId;
+        });
+        if (it == suggestions.end()) {
+            VersionSuggestion current;
+            current.versionId = selectedVersion.versionId;
+            current.name = selectedVersion.name.empty() ? selectedVersion.versionId : selectedVersion.name;
+            current.reason = "current selection is not compatible with the target instance";
+            current.recommended = false;
+            current.gameVersions = selectedVersion.gameVersions;
+            current.loaders = selectedVersion.loaders;
+            suggestions.push_back(std::move(current));
+        }
+    }
+
+    return suggestions;
+}
+
+TaskPlan ContentInstallService::build_repair_plan(const InstallRequest& request, const DependencyCheckResult& preview) {
+    TaskPlan plan;
+    plan.id = "repair-" + sanitize_component(request.provider) + "-" + sanitize_component(request.projectId) + "-" + timestamp_id();
+    plan.title = "Repair missing dependencies for " + request.projectId;
+    plan.steps = {
+        {"resolve", "Resolve missing dependencies", TaskStatus::Pending, 0, {}},
+        {"download", "Download missing artifacts", TaskStatus::Pending, 0, {}},
+        {"install", "Install missing dependencies", TaskStatus::Pending, 0, {}},
+    };
+
+    if (!preview.graph.missing.empty()) {
+        plan.steps.front().detail = "missing: " + preview.graph.missing.front();
+    }
+    return plan;
+}
+
 std::string ContentInstallService::provider_name(const InstallRequest& request) {
     return request.provider.empty() ? std::string("modrinth") : request.provider;
 }
@@ -340,6 +562,10 @@ DependencyCheckResult ContentInstallService::preview(const InstallRequest& reque
             true,
         });
     }
+
+    const bool selectedVersionCompatible = version_compatible_with_instance(*selected, *instance);
+    result.dependencyTree = build_dependency_tree(request, *selected, result.graph, installedLocks, selectedVersionCompatible);
+    result.versionSuggestions = build_version_suggestions(request, *instance, versions, *selected, selectedVersionCompatible);
 
     auto is_installed = [&](const std::string& projectId, std::string* installedVersion = nullptr) {
         for (const auto& lock : installedLocks) {
@@ -413,6 +639,8 @@ DependencyCheckResult ContentInstallService::preview(const InstallRequest& reque
         }
     }
 
+    result.dependencyTree.status = result.blocked ? "blocked" : "ready";
+
     if (result.diagnostics.empty()) {
         result.diagnostics.push_back({
             "install_preview_ok",
@@ -421,6 +649,11 @@ DependencyCheckResult ContentInstallService::preview(const InstallRequest& reque
             "proceed with installation",
             false,
         });
+    }
+
+    if (!result.graph.missing.empty()) {
+        result.repairPlan = build_repair_plan(request, result);
+        result.repairPlanAvailable = true;
     }
     return result;
 }

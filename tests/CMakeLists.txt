@@ -39,6 +39,24 @@ if(TARGET GTest::gtest)
     )
 
     add_test(NAME dawn_tests COMMAND dawn_tests)
+
+    if(TARGET dawn_ui)
+        add_executable(dawn_ui_tests)
+
+        target_sources(dawn_ui_tests
+            PRIVATE
+                app_view_model_test.cpp
+        )
+
+        target_link_libraries(dawn_ui_tests
+            PRIVATE
+                dawn_ui
+                GTest::gtest
+                Qt6::Core
+        )
+
+        add_test(NAME dawn_ui_tests COMMAND dawn_ui_tests)
+    endif()
 else()
     message(FATAL_ERROR "GoogleTest could not be configured.")
 endif()

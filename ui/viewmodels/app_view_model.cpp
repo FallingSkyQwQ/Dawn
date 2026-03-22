@@ -1,6 +1,7 @@
 #include "app_view_model.h"
 
 #include "dawn/core/model/instance_workbench.h"
+#include "dawn/core/provider/modrinth_provider.h"
 #include "dawn/infra/net/http_client.h"
 
 #include <algorithm>
@@ -29,51 +30,19 @@ QString loader_text(dawn::core::LoaderType loader) {
     return to_qstring(std::string(dawn::core::to_string(loader)));
 }
 
-class DemoPreviewProvider final : public dawn::core::IContentProvider {
-public:
-    DemoPreviewProvider() {
-        dawn::core::ContentVersion version;
-        version.versionId = "1.0.0";
-        version.name = "Demo Content";
-        version.fileUrls = {"https://example.invalid/demo-content.jar"};
-        version.loaders = {dawn::core::LoaderType::Forge};
-        version.dependencies = {
-            {"required-lib", {}, {}, dawn::core::DependencyRequirement::Required, "required for rendering"},
-            {"optional-lib", {}, {}, dawn::core::DependencyRequirement::Optional, "optional enhancement"},
-            {"bad-lib", {}, {}, dawn::core::DependencyRequirement::Incompatible, "known conflict"},
-        };
-        versions_.push_back(version);
-        dependencyGraph_.dependencies = version.dependencies;
+QString dependency_requirement_text(dawn::core::DependencyRequirement requirement) {
+    switch (requirement) {
+    case dawn::core::DependencyRequirement::Required:
+        return QStringLiteral("required");
+    case dawn::core::DependencyRequirement::Optional:
+        return QStringLiteral("optional");
+    case dawn::core::DependencyRequirement::Incompatible:
+        return QStringLiteral("incompatible");
+    case dawn::core::DependencyRequirement::Embedded:
+        return QStringLiteral("embedded");
     }
-
-    dawn::core::SearchResult search(const dawn::core::SearchQuery&) override {
-        return {};
-    }
-
-    std::vector<dawn::core::ContentVersion> versions(const std::string&) override {
-        return versions_;
-    }
-
-    dawn::core::DependencyGraph resolveDependencies(const dawn::core::InstallRequest&) override {
-        return dependencyGraph_;
-    }
-
-    dawn::core::TaskPlan buildInstallPlan(const dawn::core::InstallRequest& request) override {
-        dawn::core::TaskPlan plan;
-        plan.id = "preview-" + request.projectId;
-        plan.title = "Preview " + request.projectId;
-        plan.steps = {
-            {"resolve", "Resolve", dawn::core::TaskStatus::Pending, 0, {}},
-            {"download", "Download", dawn::core::TaskStatus::Pending, 0, {}},
-            {"deploy", "Deploy", dawn::core::TaskStatus::Pending, 0, {}},
-        };
-        return plan;
-    }
-
-private:
-    std::vector<dawn::core::ContentVersion> versions_;
-    dawn::core::DependencyGraph dependencyGraph_;
-};
+    return QStringLiteral("required");
+}
 
 QVariantList workbench_tabs_to_variant(const dawn::core::InstanceWorkbenchState& workbench) {
     QVariantList tabs;
@@ -88,15 +57,35 @@ QVariantList workbench_tabs_to_variant(const dawn::core::InstanceWorkbenchState&
     return tabs;
 }
 
+QVariantList strings_to_variant_list(const std::vector<std::string>& values) {
+    QVariantList list;
+    for (const auto& value : values) {
+        list.push_back(to_qstring(value));
+    }
+    return list;
+}
+
+QVariantList loaders_to_variant_list(const std::vector<dawn::core::LoaderType>& values) {
+    QVariantList list;
+    for (const auto value : values) {
+        list.push_back(to_qstring(std::string(dawn::core::to_string(value))));
+    }
+    return list;
+}
+
 } // namespace
 
 AppViewModel::AppViewModel(QString dataRoot, QObject* parent)
+    : AppViewModel(std::move(dataRoot), std::shared_ptr<dawn::core::IContentProvider>{}, parent) {
+}
+
+AppViewModel::AppViewModel(QString dataRoot, std::shared_ptr<dawn::core::IContentProvider> contentProvider, QObject* parent)
     : QObject(parent)
     , dataRoot_(std::move(dataRoot))
     , instanceService_(std::filesystem::path(dataRoot_.toStdString()))
     , previewDownloadService_(std::make_shared<dawn::infra::net::FakeHttpClient>())
     , contentInstallService_(std::filesystem::path(dataRoot_.toStdString()), previewDownloadService_)
-{
+    , contentProvider_(contentProvider ? std::move(contentProvider) : std::make_shared<dawn::core::ModrinthProvider>()) {
     refresh();
 }
 
@@ -114,6 +103,22 @@ QVariantList AppViewModel::taskCards() const {
         cards.push_back(taskToVariant(task));
     }
     return cards;
+}
+
+QVariantList AppViewModel::contentSearchResults() const {
+    QVariantList results;
+    for (const auto& item : contentSearchResults_) {
+        results.push_back(contentSearchResultToVariant(item));
+    }
+    return results;
+}
+
+QVariantList AppViewModel::contentVersions() const {
+    QVariantList versions;
+    for (const auto& version : contentVersions_) {
+        versions.push_back(contentVersionToVariant(version));
+    }
+    return versions;
 }
 
 QVariantList AppViewModel::instanceWorkbenchTabs() const {
@@ -149,6 +154,27 @@ QVariantMap AppViewModel::primaryPreflight() const {
     return preflightToVariant(preflightService_.inspect(instances_.front()));
 }
 
+QVariantMap AppViewModel::installPreview() const {
+    QVariantMap preview;
+    preview.insert("blocked", installPreview_.blocked);
+    preview.insert("dependencyTree", dependencyTreeToVariant(installPreview_.dependencyTree));
+    preview.insert("versionSuggestions", [&] {
+        QVariantList suggestions;
+        for (const auto& suggestion : installPreview_.versionSuggestions) {
+            suggestions.push_back(versionSuggestionToVariant(suggestion));
+        }
+        return suggestions;
+    }());
+    preview.insert("repairPlanAvailable", installPreview_.repairPlanAvailable);
+    preview.insert("repairPlan", repairPlanToVariant(installPreview_.repairPlan, installPreview_.repairPlanAvailable));
+    preview.insert("diagnostics", installDiagnostics());
+    preview.insert("rollbackEvents", rollbackEvents());
+    preview.insert("targetInstanceId", selectedTargetInstanceId());
+    preview.insert("projectId", selectedContentProjectId());
+    preview.insert("versionId", selectedContentVersionId());
+    return preview;
+}
+
 QVariantList AppViewModel::installDiagnostics() const {
     QVariantList diagnostics;
     for (const auto& diagnostic : installDiagnostics_) {
@@ -167,6 +193,18 @@ QVariantList AppViewModel::rollbackEvents() const {
 
 QString AppViewModel::installPreviewStatus() const {
     return installPreviewStatus_;
+}
+
+QString AppViewModel::selectedContentProjectId() const {
+    return selectedContentProjectId_;
+}
+
+QString AppViewModel::selectedContentVersionId() const {
+    return selectedContentVersionId_;
+}
+
+QString AppViewModel::selectedTargetInstanceId() const {
+    return activeInstanceId();
 }
 
 QString AppViewModel::primaryInstanceId() const {
@@ -230,37 +268,149 @@ bool AppViewModel::enqueueDemoTask(const QString& title) {
     return true;
 }
 
+bool AppViewModel::searchContent(const QString& text, const QString& projectType) {
+    contentSearchQuery_.text = to_std(text);
+    contentSearchQuery_.projectType = dawn::core::project_type_from_string(to_std(projectType));
+
+    if (!contentProvider_) {
+        contentProvider_ = std::make_shared<dawn::core::ModrinthProvider>();
+    }
+
+    const auto result = contentProvider_->search(contentSearchQuery_);
+    populateSearchResults(result);
+    if (!contentSearchResults_.empty()) {
+        selectedContentProjectId_ = to_qstring(contentSearchResults_.front().projectId);
+        refreshSelectedContentVersions();
+        updateSelectedContentPreview();
+    } else {
+        contentVersions_.clear();
+        selectedContentProjectId_.clear();
+        selectedContentVersionId_.clear();
+        refreshInstallPreview();
+    }
+    emit dataChanged();
+    return !contentSearchResults_.empty();
+}
+
+bool AppViewModel::selectSearchResult(const QString& projectId) {
+    const auto requested = to_std(projectId);
+    const auto it = std::find_if(contentSearchResults_.begin(), contentSearchResults_.end(), [&](const dawn::core::SearchResultItem& item) {
+        return item.projectId == requested;
+    });
+    if (it == contentSearchResults_.end()) {
+        return false;
+    }
+    selectedContentProjectId_ = projectId;
+    selectedContentVersionId_.clear();
+    refreshSelectedContentVersions();
+    updateSelectedContentPreview();
+    emit dataChanged();
+    return true;
+}
+
+bool AppViewModel::selectTargetInstance(const QString& instanceId) {
+    const auto requested = to_std(instanceId);
+    const auto it = std::find_if(instances_.begin(), instances_.end(), [&](const dawn::core::InstanceManifest& manifest) {
+        return manifest.id == requested;
+    });
+    if (it == instances_.end()) {
+        return false;
+    }
+    setActiveInstance(instanceId);
+    refreshInstallPreview();
+    return true;
+}
+
+bool AppViewModel::selectInstallVersion(const QString& versionId) {
+    const auto requested = to_std(versionId);
+    const auto it = std::find_if(contentVersions_.begin(), contentVersions_.end(), [&](const dawn::core::ContentVersion& version) {
+        return version.versionId == requested;
+    });
+    if (it == contentVersions_.end()) {
+        return false;
+    }
+    selectedContentVersionId_ = versionId;
+    updateSelectedContentPreview();
+    emit dataChanged();
+    return true;
+}
+
 void AppViewModel::refreshInstallPreview() {
     installDiagnostics_.clear();
     rollbackEvents_.clear();
+    installPreview_ = dawn::core::DependencyCheckResult{};
     installPreviewStatus_ = QStringLiteral("No install preview available");
 
-    const auto instanceId = activeInstanceId();
-    if (instanceId.isEmpty()) {
-        installPreviewStatus_ = QStringLiteral("Create or select an instance to preview installs");
+    if (selectedContentProjectId_.isEmpty()) {
+        if (!contentSearchResults_.empty()) {
+            selectedContentProjectId_ = to_qstring(contentSearchResults_.front().projectId);
+        } else {
+            installPreviewStatus_ = QStringLiteral("Search content to preview install plans");
+            emit dataChanged();
+            return;
+        }
+    }
+
+    if (selectedContentVersionId_.isEmpty()) {
+        refreshSelectedContentVersions();
+    }
+
+    if (selectedContentVersionId_.isEmpty()) {
+        installPreviewStatus_ = QStringLiteral("Select a version to preview installation");
         emit dataChanged();
         return;
     }
 
-    DemoPreviewProvider provider;
     dawn::core::InstallRequest request;
     request.provider = "modrinth";
-    request.instanceId = to_std(instanceId);
-    request.projectId = "demo-content";
-    request.versionId = "1.0.0";
-    request.projectType = dawn::core::ProjectType::Mod;
+    request.instanceId = to_std(selectedTargetInstanceId());
+    request.projectId = to_std(selectedContentProjectId_);
+    request.versionId = to_std(selectedContentVersionId_);
+    request.projectType = contentSearchQuery_.projectType;
 
-    const auto result = contentInstallService_.install(request, provider, nullptr);
-    for (const auto& diagnostic : result.diagnostics) {
-        installDiagnostics_.push_back(diagnostic);
+    if (!contentProvider_) {
+        contentProvider_ = std::make_shared<dawn::core::ModrinthProvider>();
     }
-    for (const auto& event : result.rollbackEvents) {
-        rollbackEvents_.push_back(event);
+
+    installPreview_ = contentInstallService_.preview(request, *contentProvider_);
+    installDiagnostics_ = installPreview_.diagnostics;
+    if (installPreview_.repairPlanAvailable) {
+        installPreviewStatus_ = QStringLiteral("Repair plan available");
+    } else if (installPreview_.blocked) {
+        installPreviewStatus_ = QStringLiteral("Install preview blocked");
+    } else {
+        installPreviewStatus_ = QStringLiteral("Install preview ready");
     }
-    installPreviewStatus_ = result.success
-        ? QStringLiteral("Install preview succeeded")
-        : QString::fromStdString(result.message.empty() ? "Install preview blocked" : result.message);
     emit dataChanged();
+}
+
+void AppViewModel::updateSelectedContentPreview() {
+    refreshInstallPreview();
+}
+
+void AppViewModel::refreshSelectedContentVersions() {
+    contentVersions_.clear();
+    if (!contentProvider_ || selectedContentProjectId_.isEmpty()) {
+        selectedContentVersionId_.clear();
+        return;
+    }
+
+    contentVersions_ = contentProvider_->versions(to_std(selectedContentProjectId_));
+    if (contentVersions_.empty()) {
+        selectedContentVersionId_.clear();
+        return;
+    }
+
+    const auto selected = std::find_if(contentVersions_.begin(), contentVersions_.end(), [&](const dawn::core::ContentVersion& version) {
+        return version.versionId == to_std(selectedContentVersionId_);
+    });
+    if (selected == contentVersions_.end()) {
+        selectedContentVersionId_ = to_qstring(contentVersions_.front().versionId);
+    }
+}
+
+void AppViewModel::populateSearchResults(const dawn::core::SearchResult& result) {
+    contentSearchResults_ = result.items;
 }
 
 QVariantMap AppViewModel::preflightFor(const QString& instanceId) const {
@@ -348,6 +498,86 @@ QVariantMap AppViewModel::taskToVariant(const dawn::core::TaskPlan& plan) const 
         {"status", task_status_text(plan.status)},
         {"stepCount", static_cast<int>(plan.steps.size())},
         {"completedSteps", doneCount}
+    };
+}
+
+QVariantMap AppViewModel::stepToVariant(const dawn::core::TaskStep& step) const {
+    return QVariantMap{
+        {"id", to_qstring(step.id)},
+        {"title", to_qstring(step.title)},
+        {"status", task_status_text(step.status)},
+        {"progress", step.progress},
+        {"detail", to_qstring(step.detail)},
+    };
+}
+
+QVariantMap AppViewModel::contentSearchResultToVariant(const dawn::core::SearchResultItem& item) const {
+    return QVariantMap{
+        {"projectId", to_qstring(item.projectId)},
+        {"title", to_qstring(item.title)},
+        {"summary", to_qstring(item.summary)},
+        {"author", to_qstring(item.author)},
+        {"iconUrl", to_qstring(item.iconUrl)},
+        {"updatedAt", to_qstring(item.updatedAt)},
+        {"downloads", static_cast<int>(item.downloads)},
+        {"projectType", to_qstring(std::string(dawn::core::to_string(item.projectType)))},
+        {"supportedGameVersions", strings_to_variant_list(item.supportedGameVersions)},
+        {"supportedLoaders", loaders_to_variant_list(item.supportedLoaders)},
+        {"selected", item.projectId == to_std(selectedContentProjectId_)},
+    };
+}
+
+QVariantMap AppViewModel::contentVersionToVariant(const dawn::core::ContentVersion& version) const {
+    return QVariantMap{
+        {"versionId", to_qstring(version.versionId)},
+        {"name", to_qstring(version.name)},
+        {"fileCount", static_cast<int>(version.fileUrls.size())},
+        {"gameVersions", strings_to_variant_list(version.gameVersions)},
+        {"loaders", loaders_to_variant_list(version.loaders)},
+        {"selected", version.versionId == to_std(selectedContentVersionId_)},
+        {"recommended", false},
+        {"reason", QString()},
+    };
+}
+
+QVariantMap AppViewModel::versionSuggestionToVariant(const dawn::core::VersionSuggestion& suggestion) const {
+    return QVariantMap{
+        {"versionId", to_qstring(suggestion.versionId)},
+        {"name", to_qstring(suggestion.name)},
+        {"reason", to_qstring(suggestion.reason)},
+        {"recommended", suggestion.recommended},
+        {"gameVersions", strings_to_variant_list(suggestion.gameVersions)},
+        {"loaders", loaders_to_variant_list(suggestion.loaders)},
+    };
+}
+
+QVariantMap AppViewModel::dependencyTreeToVariant(const dawn::core::DependencyTreeNode& node) const {
+    QVariantList children;
+    for (const auto& child : node.children) {
+        children.push_back(dependencyTreeToVariant(child));
+    }
+
+    return QVariantMap{
+        {"id", to_qstring(node.projectId)},
+        {"versionId", to_qstring(node.versionId)},
+        {"requirement", dependency_requirement_text(node.requirement)},
+        {"status", to_qstring(node.status)},
+        {"message", to_qstring(node.message)},
+        {"children", children},
+    };
+}
+
+QVariantMap AppViewModel::repairPlanToVariant(const dawn::core::TaskPlan& plan, bool available) const {
+    QVariantList steps;
+    for (const auto& step : plan.steps) {
+        steps.push_back(stepToVariant(step));
+    }
+    return QVariantMap{
+        {"available", available},
+        {"id", to_qstring(plan.id)},
+        {"title", to_qstring(plan.title)},
+        {"status", to_qstring(std::string(dawn::core::to_string(plan.status)))},
+        {"steps", steps},
     };
 }
 
