@@ -1,0 +1,21 @@
+{
+  "theme": "dark",
+  "downloadConcurrency": 4,
+  "cachePath": "dawn-data/cache",
+  "javaStrategy": "auto",
+  "javaRuntimePath": "",
+  "memoryStrategy": "balanced",
+  "minMemoryMb": 2048,
+  "maxMemoryMb": 4096,
+  "backupStrategy": "before-update",
+  "proxy": {
+    "enabled": false,
+    "scheme": "http",
+    "host": "",
+    "port": 0,
+    "username": "",
+    "password": ""
+  },
+  "experimentalMode": false,
+  "experimentalFlags": []
+}
