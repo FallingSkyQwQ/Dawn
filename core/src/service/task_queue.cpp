@@ -14,9 +14,17 @@ std::string make_task_id() {
     return "task-" + std::to_string(millis);
 }
 
+TaskPlan* find_task(std::vector<TaskPlan>& tasks, const std::string& id) {
+    const auto it = std::find_if(tasks.begin(), tasks.end(), [&](const TaskPlan& plan) {
+        return plan.id == id;
+    });
+    return it == tasks.end() ? nullptr : &*it;
+}
+
 } // namespace
 
 std::string TaskQueue::enqueue(TaskPlan plan) {
+    std::lock_guard<std::mutex> lock(mutex_);
     if (plan.id.empty()) {
         plan.id = make_task_id();
     }
@@ -32,14 +40,13 @@ const std::vector<TaskPlan>& TaskQueue::tasks() const noexcept {
 }
 
 TaskPlan* TaskQueue::find(const std::string& id) {
-    const auto it = std::find_if(tasks_.begin(), tasks_.end(), [&](const TaskPlan& plan) {
-        return plan.id == id;
-    });
-    return it == tasks_.end() ? nullptr : &*it;
+    std::lock_guard<std::mutex> lock(mutex_);
+    return find_task(tasks_, id);
 }
 
 bool TaskQueue::start(const std::string& id) {
-    auto* task = find(id);
+    std::lock_guard<std::mutex> lock(mutex_);
+    auto* task = find_task(tasks_, id);
     if (!task) {
         return false;
     }
@@ -48,7 +55,8 @@ bool TaskQueue::start(const std::string& id) {
 }
 
 bool TaskQueue::pause(const std::string& id) {
-    auto* task = find(id);
+    std::lock_guard<std::mutex> lock(mutex_);
+    auto* task = find_task(tasks_, id);
     if (!task || is_terminal(task->status)) {
         return false;
     }
@@ -57,7 +65,8 @@ bool TaskQueue::pause(const std::string& id) {
 }
 
 bool TaskQueue::resume(const std::string& id) {
-    auto* task = find(id);
+    std::lock_guard<std::mutex> lock(mutex_);
+    auto* task = find_task(tasks_, id);
     if (!task || task->status != TaskStatus::Paused) {
         return false;
     }
@@ -66,7 +75,8 @@ bool TaskQueue::resume(const std::string& id) {
 }
 
 bool TaskQueue::complete_step(const std::string& id, const std::string& stepId, TaskStatus status, std::string detail) {
-    auto* task = find(id);
+    std::lock_guard<std::mutex> lock(mutex_);
+    auto* task = find_task(tasks_, id);
     if (!task) {
         return false;
     }
@@ -93,7 +103,8 @@ bool TaskQueue::complete_step(const std::string& id, const std::string& stepId, 
 }
 
 bool TaskQueue::fail(const std::string& id, std::string detail) {
-    auto* task = find(id);
+    std::lock_guard<std::mutex> lock(mutex_);
+    auto* task = find_task(tasks_, id);
     if (!task) {
         return false;
     }
@@ -106,6 +117,7 @@ bool TaskQueue::fail(const std::string& id, std::string detail) {
 }
 
 bool TaskQueue::remove(const std::string& id) {
+    std::lock_guard<std::mutex> lock(mutex_);
     const auto it = std::remove_if(tasks_.begin(), tasks_.end(), [&](const TaskPlan& plan) {
         return plan.id == id;
     });

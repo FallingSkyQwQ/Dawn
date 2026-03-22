@@ -2,6 +2,7 @@
 
 #include "dawn/core/model/task_types.h"
 
+#include <mutex>
 #include <vector>
 
 namespace dawn::core {
@@ -19,6 +20,7 @@ public:
     bool remove(const std::string& id);
 
 private:
+    mutable std::mutex mutex_;
     std::vector<TaskPlan> tasks_;
 };
 

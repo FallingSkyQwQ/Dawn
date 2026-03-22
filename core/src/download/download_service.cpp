@@ -7,10 +7,13 @@
 #include "dawn/infra/net/http_client_factory.h"
 
 #include <algorithm>
+#include <atomic>
 #include <chrono>
 #include <cctype>
 #include <cstdint>
 #include <filesystem>
+#include <future>
+#include <mutex>
 #include <utility>
 
 namespace dawn::core {
@@ -63,14 +66,36 @@ HttpRequest make_get_request(const std::string& url) {
     return request;
 }
 
+std::vector<std::string> build_candidate_urls(const DownloadRequest& request) {
+    std::vector<std::string> urls;
+    if (!request.url.empty()) {
+        urls.push_back(request.url);
+    }
+    for (const auto& mirror : request.mirrors) {
+        if (!mirror.empty() && std::find(urls.begin(), urls.end(), mirror) == urls.end()) {
+            urls.push_back(mirror);
+        }
+    }
+    return urls;
+}
+
 } // namespace
 
 DownloadService::DownloadService()
-    : client_(dawn::infra::net::HttpClientFactory::create_default_http_client()) {
+    : DownloadService(dawn::infra::net::HttpClientFactory::create_default_http_client(), 4) {
 }
 
 DownloadService::DownloadService(std::shared_ptr<dawn::infra::net::HttpClient> client)
-    : client_(client ? std::move(client) : dawn::infra::net::HttpClientFactory::create_default_http_client()) {
+    : DownloadService(std::move(client), 4) {
+}
+
+DownloadService::DownloadService(int maxConcurrency)
+    : DownloadService(dawn::infra::net::HttpClientFactory::create_default_http_client(), maxConcurrency) {
+}
+
+DownloadService::DownloadService(std::shared_ptr<dawn::infra::net::HttpClient> client, int maxConcurrency)
+    : client_(client ? std::move(client) : dawn::infra::net::HttpClientFactory::create_default_http_client())
+    , maxConcurrency_(std::max(1, maxConcurrency)) {
 }
 
 std::string DownloadService::make_download_id() {
@@ -83,6 +108,18 @@ std::string DownloadService::make_plan_id(const std::string& title) {
 
 std::string DownloadService::make_step_detail(const std::string& message, int attempt, int maxAttempts) {
     return message + " [attempt " + std::to_string(attempt) + "/" + std::to_string(maxAttempts) + "]";
+}
+
+std::vector<std::string> DownloadService::candidate_urls(const DownloadRequest& request) const {
+    return build_candidate_urls(request);
+}
+
+void DownloadService::set_max_concurrency(int maxConcurrency) {
+    maxConcurrency_ = std::max(1, maxConcurrency);
+}
+
+int DownloadService::max_concurrency() const noexcept {
+    return maxConcurrency_;
 }
 
 std::string DownloadService::enqueue(DownloadJob job) {
@@ -156,11 +193,46 @@ TaskPlan DownloadService::build_download_plan(const DownloadRequest& request) co
 }
 
 DownloadResult DownloadService::execute(const DownloadRequest& request, TaskQueue* queue) const {
+    return execute_single(request, queue);
+}
+
+DownloadBatchResult DownloadService::execute_many(const std::vector<DownloadRequest>& requests, TaskQueue* queue) const {
+    DownloadBatchResult batch;
+    batch.results.resize(requests.size());
+    if (requests.empty()) {
+        return batch;
+    }
+
+    const auto workerCount = static_cast<std::size_t>(std::max(1, std::min(maxConcurrency_, static_cast<int>(requests.size()))));
+    std::atomic_size_t nextIndex{0};
+    std::vector<std::future<void>> workers;
+    workers.reserve(workerCount);
+
+    for (std::size_t worker = 0; worker < workerCount; ++worker) {
+        workers.push_back(std::async(std::launch::async, [this, &requests, &batch, &nextIndex, queue]() {
+            for (;;) {
+                const auto index = nextIndex.fetch_add(1);
+                if (index >= requests.size()) {
+                    break;
+                }
+                batch.results[index] = execute_single(requests[index], queue);
+            }
+        }));
+    }
+
+    for (auto& worker : workers) {
+        worker.get();
+    }
+
+    return batch;
+}
+
+DownloadResult DownloadService::execute_single(const DownloadRequest& request, TaskQueue* queue) const {
     DownloadResult result;
     result.plan = build_download_plan(request);
     result.artifact.requestId = result.plan.id;
     result.artifact.title = request.title.empty() ? result.plan.title : request.title;
-    result.artifact.sourceUrl = request.url;
+    const auto urls = candidate_urls(request);
     result.artifact.destination = request.destination;
 
     if (queue) {
@@ -173,7 +245,7 @@ DownloadResult DownloadService::execute(const DownloadRequest& request, TaskQueu
     result.state = DownloadState::Running;
     result.logs.push_back("started download plan: " + result.plan.id);
 
-    if (request.url.empty()) {
+    if (urls.empty()) {
         result.error = "download url is required";
         pipeline.advance_step("prepare", TaskStatus::Failed, result.error);
         if (queue) {
@@ -249,55 +321,74 @@ DownloadResult DownloadService::execute(const DownloadRequest& request, TaskQueu
     std::string lastError;
     bool downloadSucceeded = false;
 
-    for (int attempt = 1; attempt <= maxAttempts; ++attempt) {
-        result.artifact.attempts = attempt;
-        result.logs.push_back(make_step_detail("download attempt", attempt, maxAttempts));
+    int attempt = 0;
+    for (const auto& url : urls) {
+        result.logs.push_back("download source: " + url);
+        for (int retry = 1; retry <= maxAttempts; ++retry) {
+            ++attempt;
+            result.artifact.attempts = attempt;
+            result.logs.push_back(make_step_detail("download attempt from " + url, retry, maxAttempts));
 
-        auto downloadRequest = make_get_request(request.url);
-        if (resumeRequested) {
-            downloadRequest.headers.emplace("Range", "bytes=" + std::to_string(existingBytes) + "-");
-        }
-
-        const auto response = client_->send(downloadRequest);
-        if (!response.success()) {
-            lastError = "http status " + std::to_string(response.statusCode);
-            result.logs.push_back(make_download_error("download failed", attempt, maxAttempts, lastError));
-            if (attempt < maxAttempts) {
-                continue;
+            auto downloadRequest = make_get_request(url);
+            if (resumeRequested) {
+                downloadRequest.headers.emplace("Range", "bytes=" + std::to_string(existingBytes) + "-");
             }
-            break;
-        }
 
-        std::string writeError;
-        const bool appendResponse = resumeRequested && response.statusCode == 206;
-        if (appendResponse) {
-            if (!dawn::infra::fs::append_binary_file(request.destination, response.body, &writeError)) {
+            dawn::infra::net::HttpResponse response;
+            {
+                std::lock_guard<std::mutex> lock(clientMutex_);
+                response = client_->send(downloadRequest);
+            }
+
+            if (!response.success()) {
+                lastError = "http status " + std::to_string(response.statusCode);
+                result.logs.push_back(make_download_error("download failed from " + url, retry, maxAttempts, lastError));
+                if (retry < maxAttempts) {
+                    continue;
+                }
+                lastError = make_download_error("source exhausted", retry, maxAttempts, lastError);
+                break;
+            }
+
+            result.artifact.sourceUrl = url;
+
+            std::string writeError;
+            const bool appendResponse = resumeRequested && response.statusCode == 206;
+            if (appendResponse) {
+                if (!dawn::infra::fs::append_binary_file(request.destination, response.body, &writeError)) {
+                    lastError = writeError;
+                    result.logs.push_back(make_download_error("append failed from " + url, retry, maxAttempts, lastError));
+                    if (retry < maxAttempts) {
+                        continue;
+                    }
+                    break;
+                }
+            } else if (!dawn::infra::fs::write_binary_file(request.destination, response.body, &writeError)) {
                 lastError = writeError;
-                result.logs.push_back(make_download_error("append failed", attempt, maxAttempts, lastError));
-                if (attempt < maxAttempts) {
+                result.logs.push_back(make_download_error("write failed from " + url, retry, maxAttempts, lastError));
+                if (retry < maxAttempts) {
                     continue;
                 }
                 break;
             }
-        } else if (!dawn::infra::fs::write_binary_file(request.destination, response.body, &writeError)) {
-            lastError = writeError;
-            result.logs.push_back(make_download_error("write failed", attempt, maxAttempts, lastError));
-            if (attempt < maxAttempts) {
-                continue;
+
+            result.artifact.bytesWritten = appendResponse
+                ? static_cast<std::size_t>(existingBytes + response.body.size())
+                : response.body.size();
+            result.logs.push_back("download wrote " + std::to_string(result.artifact.bytesWritten) + " bytes from " + url);
+            pipeline.advance_step("download", TaskStatus::Succeeded, "download completed");
+            if (queue) {
+                queue->complete_step(result.plan.id, "download", TaskStatus::Succeeded, "download completed");
             }
+            downloadSucceeded = true;
             break;
         }
-
-        result.artifact.bytesWritten = appendResponse
-            ? static_cast<std::size_t>(existingBytes + response.body.size())
-            : response.body.size();
-        result.logs.push_back("download wrote " + std::to_string(result.artifact.bytesWritten) + " bytes");
-        pipeline.advance_step("download", TaskStatus::Succeeded, "download completed");
-        if (queue) {
-            queue->complete_step(result.plan.id, "download", TaskStatus::Succeeded, "download completed");
+        if (!downloadSucceeded && url != urls.back()) {
+            result.logs.push_back("falling back to next mirror");
         }
-        downloadSucceeded = true;
-        break;
+        if (downloadSucceeded) {
+            break;
+        }
     }
 
     if (!downloadSucceeded) {

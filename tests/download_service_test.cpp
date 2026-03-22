@@ -6,6 +6,7 @@
 
 #include <gtest/gtest.h>
 
+#include <algorithm>
 #include <filesystem>
 
 using namespace dawn::core;
@@ -139,6 +140,144 @@ TEST(DownloadService, ResumesPartialDownloadsWithRangeHeader) {
     EXPECT_EQ(read_file(destination), "hello world");
     EXPECT_EQ(result.artifact.bytesWritten, std::string("hello world").size());
     EXPECT_EQ(result.artifact.checksum, dawn::infra::hash::sha256_file_hex(destination));
+
+    std::filesystem::remove_all(root);
+}
+
+TEST(DownloadService, FallsBackToMirrorAfterPrimaryFailure) {
+    auto client = std::make_shared<dawn::infra::net::FakeHttpClient>();
+    client->push_response(dawn::infra::net::HttpResponse{500, {}, "primary failure"});
+    client->push_response(dawn::infra::net::HttpResponse{200, {}, "mirror payload"});
+
+    const auto root = std::filesystem::temp_directory_path() / "dawn-download-mirror";
+    std::filesystem::remove_all(root);
+    const auto destination = root / "artifact.bin";
+
+    DownloadService service(client, 2);
+    DownloadRequest request;
+    request.id = "download-5";
+    request.title = "Mirror Artifact";
+    request.url = "https://primary.invalid/artifact.bin";
+    request.mirrors = {"https://mirror.invalid/artifact.bin"};
+    request.destination = destination;
+    request.expectedHash = dawn::infra::hash::sha256_hex("mirror payload");
+
+    const auto result = service.execute(request);
+
+    EXPECT_TRUE(result.success);
+    EXPECT_EQ(result.artifact.sourceUrl, "https://mirror.invalid/artifact.bin");
+    EXPECT_EQ(read_file(destination), "mirror payload");
+    ASSERT_FALSE(result.logs.empty());
+    EXPECT_TRUE(std::any_of(result.logs.begin(), result.logs.end(), [](const std::string& log) {
+        return log.find("download source: https://mirror.invalid/artifact.bin") != std::string::npos;
+    }));
+    EXPECT_NE(std::find(result.logs.begin(), result.logs.end(), "falling back to next mirror"), result.logs.end());
+
+    std::filesystem::remove_all(root);
+}
+
+TEST(DownloadService, ExecutesBatchDownloadsConcurrently) {
+    auto client = std::make_shared<dawn::infra::net::InMemoryHttpClient>();
+
+    const auto root = std::filesystem::temp_directory_path() / "dawn-download-batch";
+    std::filesystem::remove_all(root);
+
+    std::vector<DownloadRequest> requests;
+    for (int index = 1; index <= 3; ++index) {
+        const auto url = "https://example.invalid/artifact-" + std::to_string(index) + ".bin";
+        client->set_response(
+            dawn::infra::net::HttpMethod::Get,
+            url,
+            dawn::infra::net::HttpResponse{200, {}, "payload-" + std::to_string(index)});
+
+        DownloadRequest request;
+        request.id = "batch-" + std::to_string(index);
+        request.title = "Batch " + std::to_string(index);
+        request.url = url;
+        request.destination = root / ("artifact-" + std::to_string(index) + ".bin");
+        request.expectedHash = dawn::infra::hash::sha256_hex("payload-" + std::to_string(index));
+        requests.push_back(std::move(request));
+    }
+
+    DownloadService service(client, 3);
+    TaskQueue queue;
+    const auto batch = service.execute_many(requests, &queue);
+
+    ASSERT_EQ(batch.results.size(), 3u);
+    for (std::size_t index = 0; index < batch.results.size(); ++index) {
+        EXPECT_TRUE(batch.results[index].success);
+        EXPECT_TRUE(std::filesystem::exists(requests[index].destination));
+        EXPECT_EQ(read_file(requests[index].destination), "payload-" + std::to_string(index + 1));
+    }
+    ASSERT_EQ(queue.tasks().size(), 3u);
+    for (const auto& task : queue.tasks()) {
+        EXPECT_EQ(task.status, TaskStatus::Succeeded);
+    }
+
+    std::filesystem::remove_all(root);
+}
+
+TEST(DownloadService, BatchFailureDoesNotBlockOtherTasks) {
+    auto client = std::make_shared<dawn::infra::net::InMemoryHttpClient>();
+    client->set_response(
+        dawn::infra::net::HttpMethod::Get,
+        "https://example.invalid/ok-1.bin",
+        dawn::infra::net::HttpResponse{200, {}, "ok-1"});
+    client->set_response(
+        dawn::infra::net::HttpMethod::Get,
+        "https://example.invalid/ok-2.bin",
+        dawn::infra::net::HttpResponse{200, {}, "ok-2"});
+
+    const auto root = std::filesystem::temp_directory_path() / "dawn-download-batch-fail";
+    std::filesystem::remove_all(root);
+
+    std::vector<DownloadRequest> requests;
+    DownloadRequest ok1;
+    ok1.id = "batch-ok-1";
+    ok1.title = "OK 1";
+    ok1.url = "https://example.invalid/ok-1.bin";
+    ok1.destination = root / "ok-1.bin";
+    ok1.expectedHash = dawn::infra::hash::sha256_hex("ok-1");
+    requests.push_back(ok1);
+
+    DownloadRequest bad;
+    bad.id = "batch-bad";
+    bad.title = "Bad";
+    bad.url = "https://example.invalid/missing.bin";
+    bad.destination = root / "bad.bin";
+    requests.push_back(bad);
+
+    DownloadRequest ok2;
+    ok2.id = "batch-ok-2";
+    ok2.title = "OK 2";
+    ok2.url = "https://example.invalid/ok-2.bin";
+    ok2.destination = root / "ok-2.bin";
+    ok2.expectedHash = dawn::infra::hash::sha256_hex("ok-2");
+    requests.push_back(ok2);
+
+    DownloadService service(client, 2);
+    TaskQueue queue;
+    const auto batch = service.execute_many(requests, &queue);
+
+    ASSERT_EQ(batch.results.size(), 3u);
+    EXPECT_TRUE(batch.results[0].success);
+    EXPECT_FALSE(batch.results[1].success);
+    EXPECT_TRUE(batch.results[2].success);
+    EXPECT_TRUE(std::filesystem::exists(requests[0].destination));
+    EXPECT_FALSE(std::filesystem::exists(requests[1].destination));
+    EXPECT_TRUE(std::filesystem::exists(requests[2].destination));
+    ASSERT_EQ(queue.tasks().size(), 3u);
+    std::size_t successCount = 0;
+    std::size_t failureCount = 0;
+    for (const auto& task : queue.tasks()) {
+        if (task.status == TaskStatus::Succeeded) {
+            ++successCount;
+        } else if (task.status == TaskStatus::Failed) {
+            ++failureCount;
+        }
+    }
+    EXPECT_EQ(successCount, 2u);
+    EXPECT_EQ(failureCount, 1u);
 
     std::filesystem::remove_all(root);
 }
