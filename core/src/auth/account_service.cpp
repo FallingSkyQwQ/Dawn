@@ -178,6 +178,19 @@ TokenState update_account_token_state(AccountProfile* account, const std::chrono
     return account->tokenState;
 }
 
+std::string format_timestamp(const std::chrono::system_clock::time_point& timePoint) {
+    const auto time = std::chrono::system_clock::to_time_t(timePoint);
+    std::tm tm{};
+#if defined(_WIN32)
+    localtime_s(&tm, &time);
+#else
+    localtime_r(&time, &tm);
+#endif
+    std::ostringstream out;
+    out << std::put_time(&tm, "%Y-%m-%dT%H:%M:%S");
+    return out.str();
+}
+
 AccountService::AccountService(std::filesystem::path root) : root_(std::move(root)) {
     reload(nullptr);
 }
@@ -239,6 +252,57 @@ AccountProfile AccountService::build_offline_profile(OfflineProfile profile) con
         account.offline.uuid = account.id;
     }
     return account;
+}
+
+bool AccountService::apply_microsoft_identity_result(MicrosoftAccount* account, const MicrosoftIdentityResult& result, std::chrono::system_clock::time_point now) {
+    if (!account || !result.ok) {
+        return false;
+    }
+
+    if (!result.oauthAccessToken.empty()) {
+        account->accessToken = result.oauthAccessToken;
+    }
+    if (!result.uuid.empty()) {
+        account->uuid = result.uuid;
+    }
+    if (!result.displayName.empty()) {
+        account->displayName = result.displayName;
+    }
+    if (!result.expiresAt.empty()) {
+        account->expiresAt = result.expiresAt;
+    } else if (result.expiresIn > 0) {
+        account->expiresAt = format_timestamp(now + std::chrono::seconds(result.expiresIn));
+    }
+    account->tokenState = update_microsoft_token_state(account, now);
+    return true;
+}
+
+bool AccountService::update_microsoft_account(const std::string& id, const MicrosoftIdentityResult& result, std::string* error, std::chrono::system_clock::time_point now) {
+    if (!result.ok) {
+        if (error) {
+            *error = "identity result is not successful";
+        }
+        return false;
+    }
+
+    const auto it = std::find_if(accounts_.begin(), accounts_.end(), [&](const AccountProfile& account) {
+        return account.id == id && account.type == AccountType::Microsoft;
+    });
+    if (it == accounts_.end()) {
+        if (error) {
+            *error = "account not found";
+        }
+        return false;
+    }
+
+    if (!apply_microsoft_identity_result(&it->microsoft, result, now)) {
+        if (error) {
+            *error = "failed to apply microsoft identity result";
+        }
+        return false;
+    }
+    it->tokenState = it->microsoft.tokenState;
+    return save(error);
 }
 
 std::string AccountService::make_account_id(const std::string& seed) const {

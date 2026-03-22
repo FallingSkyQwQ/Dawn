@@ -12,6 +12,7 @@ if(GTest_FOUND)
             global_settings_test.cpp
             instance_manifest_test.cpp
             http_client_factory_test.cpp
+            microsoft_identity_service_test.cpp
             microsoft_oauth_service_test.cpp
             modrinth_provider_protocol_test.cpp
             preflight_test.cpp

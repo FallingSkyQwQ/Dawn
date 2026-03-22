@@ -71,7 +71,7 @@ The code is layered so that the core library can be tested without Qt.
 | --- | --- | --- |
 | Core instance storage | implemented | JSON-backed instance manifests and workbench model are wired in. |
 | Settings | implemented | Global settings model and JSON persistence are available. |
-| Accounts | protocol-adapter | Microsoft and offline caches exist; token state helpers and OAuth payloads are wired, transport defaults to fake. |
+| Accounts | protocol-adapter | Microsoft and offline caches exist; OAuth plus Xbox Live, XSTS, and Minecraft profile protocol layers are wired, transport defaults to fake on non-Windows. |
 | Java | scaffolded | Runtime discovery and profile stubs are present. |
 | Minecraft versions | scaffolded | Version classification and lookup are local stubs. |
 | Loaders | scaffolded | Fabric, Quilt, Forge, NeoForge, and OptiFine profiles are represented. |
@@ -79,7 +79,7 @@ The code is layered so that the core library can be tested without Qt.
 | Diagnostics | scaffolded | Log rule matching returns human-readable categories. |
 | Backups | scaffolded | Snapshot metadata and restore plans are local stubs. |
 | Modrinth integration | protocol-adapter | Search/version URL builders and JSON parsing are wired; Windows uses WinHTTP, other platforms use fake transport. |
-| Microsoft auth | protocol-adapter | Device-code and token payloads are wired; Windows uses WinHTTP, other platforms use fake transport. |
+| Microsoft auth | protocol-adapter | Device-code, Xbox Live, XSTS, and Minecraft profile protocol layers are wired; Windows uses WinHTTP, other platforms use fake transport. |
 | HTTP transport | partial | `WinHttpClient` is available on Windows; the default factory falls back to `FakeHttpClient` elsewhere. |
 | FluentUIbi | planned | The shell is compatible with the submodule but does not depend on it. |
 
@@ -89,3 +89,4 @@ The code is layered so that the core library can be tested without Qt.
 * Real Minecraft runtime orchestration is still stubbed.
 * FluentUIbi integration is behind a CMake switch and falls back when the submodule is not present.
 * Download executor status: executable scaffold only; resume support, parallel transfer, and deeper corruption recovery are still pending.
+* Microsoft identity protocol coverage now reaches Minecraft profile, but end-to-end live account login still needs real-world integration testing against the platform services.

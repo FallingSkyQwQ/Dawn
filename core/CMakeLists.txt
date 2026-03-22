@@ -3,6 +3,7 @@ add_library(dawn_core STATIC)
 target_sources(dawn_core
     PRIVATE
         src/auth/account_service.cpp
+        src/auth/microsoft_identity_service.cpp
         src/auth/microsoft_oauth_service.cpp
         src/backup/backup_service.cpp
         src/diagnostics/diagnostics_service.cpp

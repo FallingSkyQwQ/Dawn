@@ -1,5 +1,7 @@
 #pragma once
 
+#include "dawn/core/auth/microsoft_identity_service.h"
+
 #include <filesystem>
 #include <chrono>
 #include <optional>
@@ -68,6 +70,8 @@ public:
 
     AccountProfile add_microsoft_account(MicrosoftAccount account, std::string* error = nullptr);
     AccountProfile add_offline_profile(OfflineProfile profile, std::string* error = nullptr);
+    bool apply_microsoft_identity_result(MicrosoftAccount* account, const MicrosoftIdentityResult& result, std::chrono::system_clock::time_point now = std::chrono::system_clock::now());
+    bool update_microsoft_account(const std::string& id, const MicrosoftIdentityResult& result, std::string* error = nullptr, std::chrono::system_clock::time_point now = std::chrono::system_clock::now());
     AccountSwitchResult activate_account(const std::string& id, std::string* error = nullptr);
     bool remove_account(const std::string& id, std::string* error = nullptr);
     bool save(std::string* error = nullptr) const;
