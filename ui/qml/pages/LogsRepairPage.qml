@@ -67,12 +67,25 @@ Item {
                             text: "Refresh Preview"
                             onClicked: appViewModel.refreshInstallPreview()
                         }
+
+                        Button {
+                            text: "Execute Repair"
+                            enabled: appViewModel.installPreview.repairPlanAvailable
+                            onClicked: appViewModel.executeRepairPlan()
+                        }
                     }
 
                     Text {
                         text: appViewModel.installDiagnostics.length > 0 ? ("Diagnostics: " + appViewModel.installDiagnostics.length) : "No install diagnostics available yet."
                         color: "#8ea0b7"
                         font.pixelSize: 12
+                    }
+
+                    Text {
+                        text: "Repair status: " + appViewModel.repairExecutionStatus
+                        color: "#dce5f0"
+                        font.pixelSize: 12
+                        wrapMode: Text.WordWrap
                     }
                 }
             }
@@ -191,6 +204,46 @@ Item {
                                 Text { text: modelData.status + (modelData.message.length > 0 ? "  |  " + modelData.message : ""); color: "#8ea0b7"; font.pixelSize: 12; wrapMode: Text.WordWrap }
                             }
                         }
+                    }
+                }
+            }
+
+            DawnCard {
+                Layout.fillWidth: true
+                Layout.preferredHeight: 280
+                title: "Repair Execution Logs"
+                subtitle: "The live repair run writes human-readable progress here."
+
+                Column {
+                    anchors.fill: parent
+                    spacing: 10
+
+                    Repeater {
+                        model: appViewModel.repairExecutionLogs
+
+                        delegate: Rectangle {
+                            width: parent.width
+                            height: 56
+                            radius: 14
+                            color: Qt.rgba(1, 1, 1, 0.03)
+                            border.color: Qt.rgba(1, 1, 1, 0.05)
+
+                            Text {
+                                anchors.fill: parent
+                                anchors.margins: 12
+                                text: modelData
+                                color: "#dce5f0"
+                                font.pixelSize: 12
+                                wrapMode: Text.WordWrap
+                            }
+                        }
+                    }
+
+                    Text {
+                        visible: appViewModel.repairExecutionLogs.length === 0
+                        text: "No repair execution has been run yet."
+                        color: "#8ea0b7"
+                        font.pixelSize: 12
                     }
                 }
             }

@@ -9,6 +9,7 @@
 
 #include <algorithm>
 #include <filesystem>
+#include <map>
 #include <memory>
 
 using namespace dawn::core;
@@ -21,7 +22,11 @@ public:
         return {};
     }
 
-    std::vector<ContentVersion> versions(const std::string&) override {
+    std::vector<ContentVersion> versions(const std::string& projectId) override {
+        const auto it = versionMap_.find(projectId);
+        if (it != versionMap_.end()) {
+            return it->second;
+        }
         return versions_;
     }
 
@@ -41,6 +46,7 @@ public:
     }
 
     std::vector<ContentVersion> versions_;
+    std::map<std::string, std::vector<ContentVersion>> versionMap_;
     DependencyGraph dependencyGraph_;
 };
 
@@ -354,6 +360,125 @@ TEST(ContentInstallService, CreatesRepairPlanForMissingRequiredDependencies) {
     EXPECT_NE(std::find_if(preview.diagnostics.begin(), preview.diagnostics.end(), [](const InstallDiagnostic& diagnostic) {
         return diagnostic.code == "missing_required_dependency";
     }), preview.diagnostics.end());
+
+    std::filesystem::remove_all(root);
+}
+
+TEST(ContentInstallService, ExecutesRepairPlanAndInstallsMissingDependency) {
+    const auto root = std::filesystem::temp_directory_path() / "dawn-content-install-repair-execute";
+    std::filesystem::remove_all(root);
+
+    auto instance = create_instance(root, "Repair Execute Instance", LoaderType::Fabric, "1.20.1", "0.15.11");
+
+    FixedContentProvider provider;
+    ContentVersion mainVersion;
+    mainVersion.versionId = "2.0.0";
+    mainVersion.name = "Main Build";
+    mainVersion.fileUrls = {"https://example.invalid/main.jar"};
+    mainVersion.loaders = {LoaderType::Fabric};
+    mainVersion.gameVersions = {"1.20.1"};
+    mainVersion.dependencies = {
+        {"base-lib", "1.0.0", "", DependencyRequirement::Required, "base dependency"},
+    };
+    provider.versions_ = {mainVersion};
+    provider.dependencyGraph_.dependencies = mainVersion.dependencies;
+
+    ContentVersion dependencyVersion;
+    dependencyVersion.versionId = "1.0.0";
+    dependencyVersion.name = "Base Lib";
+    dependencyVersion.fileUrls = {"https://example.invalid/base-lib.jar"};
+    dependencyVersion.loaders = {LoaderType::Fabric};
+    dependencyVersion.gameVersions = {"1.20.1"};
+    provider.versionMap_["base-lib"] = {dependencyVersion};
+
+    auto client = make_http_client("base-lib payload");
+    DownloadService downloadService(client);
+    ContentInstallService service(root, downloadService);
+
+    InstallRequest request;
+    request.provider = "modrinth";
+    request.instanceId = instance.id;
+    request.projectId = "repair-mod";
+    request.versionId = "2.0.0";
+    request.projectType = ProjectType::Mod;
+
+    const auto preview = service.preview(request, provider);
+    ASSERT_TRUE(preview.repairPlanAvailable);
+
+    TaskQueue queue;
+    const auto result = service.execute_repair_plan(request, preview, provider, &queue);
+
+    EXPECT_TRUE(result.success);
+    EXPECT_EQ(result.status, ContentInstallStatus::Succeeded);
+    EXPECT_FALSE(result.logs.empty());
+    EXPECT_TRUE(std::any_of(result.logs.begin(), result.logs.end(), [](const std::string& log) {
+        return log.find("repaired dependency: base-lib") != std::string::npos;
+    }));
+    EXPECT_TRUE(std::filesystem::exists(result.deployedPath));
+    EXPECT_TRUE(std::filesystem::exists(result.lockPath));
+    EXPECT_EQ(queue.tasks().size(), 1u);
+    EXPECT_EQ(queue.tasks().front().status, TaskStatus::Succeeded);
+
+    std::filesystem::remove_all(root);
+}
+
+TEST(ContentInstallService, RollsBackPartialRepairWhenLaterDependencyFails) {
+    const auto root = std::filesystem::temp_directory_path() / "dawn-content-install-repair-failure";
+    std::filesystem::remove_all(root);
+
+    auto instance = create_instance(root, "Repair Failure Instance", LoaderType::Fabric, "1.20.1", "0.15.11");
+
+    FixedContentProvider provider;
+    ContentVersion mainVersion;
+    mainVersion.versionId = "2.0.0";
+    mainVersion.name = "Main Build";
+    mainVersion.fileUrls = {"https://example.invalid/main.jar"};
+    mainVersion.loaders = {LoaderType::Fabric};
+    mainVersion.gameVersions = {"1.20.1"};
+    mainVersion.dependencies = {
+        {"base-lib", "1.0.0", "", DependencyRequirement::Required, "base dependency"},
+        {"missing-lib", "", "", DependencyRequirement::Required, "second dependency"},
+    };
+    provider.versions_ = {mainVersion};
+    provider.dependencyGraph_.dependencies = mainVersion.dependencies;
+
+    ContentVersion dependencyVersion;
+    dependencyVersion.versionId = "1.0.0";
+    dependencyVersion.name = "Base Lib";
+    dependencyVersion.fileUrls = {"https://example.invalid/base-lib.jar"};
+    dependencyVersion.loaders = {LoaderType::Fabric};
+    dependencyVersion.gameVersions = {"1.20.1"};
+    provider.versionMap_["base-lib"] = {dependencyVersion};
+
+    auto client = make_http_client("base-lib payload");
+    DownloadService downloadService(client);
+    ContentInstallService service(root, downloadService);
+
+    InstallRequest request;
+    request.provider = "modrinth";
+    request.instanceId = instance.id;
+    request.projectId = "repair-mod";
+    request.versionId = "2.0.0";
+    request.projectType = ProjectType::Mod;
+
+    const auto preview = service.preview(request, provider);
+    ASSERT_TRUE(preview.repairPlanAvailable);
+
+    const auto result = service.execute_repair_plan(request, preview, provider, nullptr);
+
+    EXPECT_FALSE(result.success);
+    EXPECT_EQ(result.status, ContentInstallStatus::Failed);
+    EXPECT_FALSE(result.rollbackEvents.empty());
+    EXPECT_TRUE(std::any_of(result.rollbackEvents.begin(), result.rollbackEvents.end(), [](const ContentInstallResult::RollbackEvent& event) {
+        return event.action == "remove repaired artifact";
+    }));
+    EXPECT_TRUE(std::any_of(result.rollbackEvents.begin(), result.rollbackEvents.end(), [](const ContentInstallResult::RollbackEvent& event) {
+        return event.action == "remove repaired lock";
+    }));
+
+    const auto baseLockPath = std::filesystem::path(instance.gameDir) / "config" / "dawn" / "content-locks" / "modrinth" / "base-lib.json";
+    EXPECT_FALSE(std::filesystem::exists(baseLockPath));
+    EXPECT_FALSE(std::filesystem::exists(std::filesystem::path(instance.gameDir) / "mods" / "base-lib.jar"));
 
     std::filesystem::remove_all(root);
 }

@@ -7,6 +7,7 @@
 #include <gtest/gtest.h>
 
 #include <filesystem>
+#include <map>
 #include <memory>
 
 using namespace dawn::core;
@@ -23,6 +24,10 @@ public:
     }
 
     std::vector<ContentVersion> versions(const std::string& projectId) override {
+        const auto it = versionMap_.find(projectId);
+        if (it != versionMap_.end()) {
+            return it->second;
+        }
         if (projectId == "project-one") {
             return versions_;
         }
@@ -47,6 +52,7 @@ public:
 
     std::vector<SearchResultItem> items_;
     std::vector<ContentVersion> versions_;
+    std::map<std::string, std::vector<ContentVersion>> versionMap_;
     DependencyGraph dependencyGraph_;
 };
 
@@ -133,6 +139,74 @@ TEST(AppViewModel, SearchSelectionProducesInstallPreview) {
     EXPECT_EQ(preview.value("versionId").toString(), "1.1.0");
     EXPECT_FALSE(preview.value("blocked").toBool());
     EXPECT_EQ(viewModel.installPreviewStatus(), QStringLiteral("Install preview ready"));
+
+    std::filesystem::remove_all(root);
+}
+
+TEST(AppViewModel, ExecuteRepairPlanReportsStatusAndLogs) {
+    const auto root = std::filesystem::temp_directory_path() / "dawn-app-view-model-repair";
+    std::filesystem::remove_all(root);
+
+    const auto instance = create_instance(root);
+
+    auto provider = std::make_shared<PreviewContentProvider>();
+    provider->items_ = {
+        {
+            "project-one",
+            "Project One",
+            "Selected through search",
+            "Dawn",
+            "",
+            "2026-03-22",
+            1200,
+            ProjectType::Mod,
+            {"1.20.1"},
+            {LoaderType::Fabric},
+        }
+    };
+
+    ContentVersion mainVersion;
+    mainVersion.versionId = "1.0.0";
+    mainVersion.name = "First Build";
+    mainVersion.fileUrls = {"https://example.invalid/first.jar"};
+    mainVersion.loaders = {LoaderType::Fabric};
+    mainVersion.gameVersions = {"1.20.1"};
+    mainVersion.dependencies = {
+        {"base-lib", "1.0.0", "", DependencyRequirement::Required, "base dependency"},
+    };
+    provider->versions_ = {mainVersion};
+    provider->dependencyGraph_.dependencies = mainVersion.dependencies;
+
+    ContentVersion dependencyVersion;
+    dependencyVersion.versionId = "1.0.0";
+    dependencyVersion.name = "Base Lib";
+    dependencyVersion.fileUrls = {"https://example.invalid/base-lib.jar"};
+    dependencyVersion.loaders = {LoaderType::Fabric};
+    dependencyVersion.gameVersions = {"1.20.1"};
+    provider->versionMap_["base-lib"] = {dependencyVersion};
+
+    auto client = std::make_shared<dawn::infra::net::FakeHttpClient>();
+    client->push_response(dawn::infra::net::HttpResponse{200, {}, "base-lib payload"});
+
+    AppViewModel viewModel(QString::fromStdString(root.string()), provider, client);
+
+    EXPECT_TRUE(viewModel.searchContent("project", "mod"));
+    EXPECT_TRUE(viewModel.selectSearchResult("project-one"));
+    EXPECT_TRUE(viewModel.selectTargetInstance(QString::fromStdString(instance.id)));
+    EXPECT_TRUE(viewModel.selectInstallVersion("1.0.0"));
+    viewModel.refreshInstallPreview();
+
+    ASSERT_TRUE(viewModel.installPreview().value("repairPlanAvailable").toBool());
+    EXPECT_TRUE(viewModel.executeRepairPlan());
+    EXPECT_EQ(viewModel.repairExecutionStatus(), QStringLiteral("repair plan completed"));
+
+    const auto logs = viewModel.repairExecutionLogs();
+    ASSERT_FALSE(logs.isEmpty());
+    EXPECT_TRUE(logs.front().toString().contains("repair plan started"));
+    EXPECT_TRUE(std::any_of(logs.begin(), logs.end(), [](const QVariant& value) {
+        return value.toString().contains("repaired dependency: base-lib");
+    }));
+    EXPECT_GE(viewModel.taskCount(), 1);
 
     std::filesystem::remove_all(root);
 }

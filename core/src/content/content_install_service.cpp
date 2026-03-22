@@ -9,6 +9,7 @@
 #include <chrono>
 #include <cctype>
 #include <filesystem>
+#include <optional>
 #include <sstream>
 #include <system_error>
 #include <utility>
@@ -846,6 +847,258 @@ ContentInstallResult ContentInstallService::install(const InstallRequest& reques
     result.status = ContentInstallStatus::Succeeded;
     result.success = true;
     result.message = "content installed";
+    return result;
+}
+
+ContentInstallResult ContentInstallService::execute_repair_plan(const InstallRequest& request, const DependencyCheckResult& preview, IContentProvider& provider, TaskQueue* queue) const {
+    ContentInstallResult result;
+    result.plan = preview.repairPlanAvailable ? preview.repairPlan : build_repair_plan(request, preview);
+    result.status = ContentInstallStatus::Pending;
+    result.message = "repair plan started";
+    result.logs.push_back(result.message);
+
+    TaskPipeline pipeline(result.plan);
+    pipeline.start();
+
+    if (queue) {
+        result.queuedTaskId = queue->enqueue(result.plan);
+        queue->start(result.queuedTaskId);
+    }
+
+    std::string instanceError;
+    const auto instance = load_instance(request.instanceId, &instanceError);
+    if (!instance) {
+        const auto message = instanceError.empty() ? "instance not found" : instanceError;
+        fail_result(&result, &pipeline, queue, "resolve", message);
+        add_rollback_event(&result, "resolve", "abort repair", std::filesystem::path(request.instanceId), "blocked", message);
+        return result;
+    }
+
+    if (preview.graph.missing.empty()) {
+        pipeline.advance_step("resolve", TaskStatus::Succeeded, "no missing dependencies");
+        pipeline.advance_step("download", TaskStatus::Succeeded, "no missing dependencies");
+        pipeline.advance_step("install", TaskStatus::Succeeded, "no missing dependencies");
+        if (queue && !result.queuedTaskId.empty()) {
+            queue->complete_step(result.queuedTaskId, "resolve", TaskStatus::Succeeded, "no missing dependencies");
+            queue->complete_step(result.queuedTaskId, "download", TaskStatus::Succeeded, "no missing dependencies");
+            queue->complete_step(result.queuedTaskId, "install", TaskStatus::Succeeded, "no missing dependencies");
+        }
+        result.plan = pipeline.plan();
+        result.taskResult = pipeline.finish("repair plan completed");
+        result.logs.insert(result.logs.end(), result.taskResult.logs.begin(), result.taskResult.logs.end());
+        result.status = ContentInstallStatus::Succeeded;
+        result.success = true;
+        result.message = "repair plan completed";
+        return result;
+    }
+
+    const auto find_dependency = [&](const std::string& projectId) -> const ContentDependency* {
+        const auto it = std::find_if(preview.graph.dependencies.begin(), preview.graph.dependencies.end(), [&](const ContentDependency& dependency) {
+            return dependency.projectId == projectId;
+        });
+        return it == preview.graph.dependencies.end() ? nullptr : &*it;
+    };
+
+    const auto choose_dependency_version = [&](const std::string& projectId, const ContentDependency* dependency) -> std::optional<ContentVersion> {
+        const auto versions = provider.versions(projectId);
+        if (versions.empty()) {
+            return std::nullopt;
+        }
+
+        if (dependency && !dependency->versionId.empty()) {
+            const auto byVersionId = std::find_if(versions.begin(), versions.end(), [&](const ContentVersion& version) {
+                return version.versionId == dependency->versionId;
+            });
+            if (byVersionId != versions.end()) {
+                return *byVersionId;
+            }
+        }
+
+        const auto compatible = std::find_if(versions.begin(), versions.end(), [&](const ContentVersion& version) {
+            return version_compatible_with_instance(version, *instance);
+        });
+        if (compatible != versions.end()) {
+            return *compatible;
+        }
+
+        return versions.front();
+    };
+
+    const auto install_repaired_dependency = [&](const std::string& projectId, const ContentVersion& version) -> ContentInstallResult {
+        InstallRequest dependencyRequest = request;
+        dependencyRequest.projectId = projectId;
+        dependencyRequest.versionId = version.versionId;
+        dependencyRequest.projectType = ProjectType::Mod;
+
+        ContentInstallResult dependencyResult;
+        dependencyResult.plan = make_plan(dependencyRequest);
+        TaskPipeline dependencyPipeline(dependencyResult.plan);
+        dependencyPipeline.start();
+        dependencyResult.status = ContentInstallStatus::Pending;
+        dependencyResult.message = "repair dependency started";
+        dependencyResult.logs.push_back(dependencyResult.message);
+
+        if (version.fileUrls.empty()) {
+            dependencyResult.message = "selected dependency version has no downloadable file";
+            fail_result(&dependencyResult, &dependencyPipeline, nullptr, "download", dependencyResult.message);
+            add_rollback_event(&dependencyResult, "download", "abort repair", std::filesystem::path(projectId), "blocked", dependencyResult.message);
+            return dependencyResult;
+        }
+
+        const auto finalPath = final_path_for(*instance, dependencyRequest, version);
+        const auto stagingPath = staging_path_for(*instance, dependencyRequest, version);
+        dependencyResult.lockPath = lock_path_for(dependencyRequest, *instance);
+
+        auto rollback_artifacts = [&](const std::string& step, bool includeFinalPath, bool includeLockPath) {
+            cleanup_target(&dependencyResult, step, "remove staging", stagingPath);
+            if (includeFinalPath) {
+                cleanup_target(&dependencyResult, step, "remove deployed artifact", finalPath);
+            }
+            if (includeLockPath && !dependencyResult.lockPath.empty()) {
+                cleanup_target(&dependencyResult, step, "remove lock", dependencyResult.lockPath);
+            }
+        };
+
+        DownloadRequest downloadRequest;
+        downloadRequest.id = make_install_id(dependencyRequest);
+        downloadRequest.title = dependencyRequest.projectId + "@" + version.versionId;
+        downloadRequest.url = version.fileUrls.front();
+        downloadRequest.destination = stagingPath;
+        downloadRequest.retryCount = 1;
+        downloadRequest.overwriteExisting = true;
+
+        dependencyResult.downloadResult = downloadService_.execute(downloadRequest);
+        add_logs(&dependencyResult, dependencyResult.downloadResult.logs, "download: ");
+        if (!dependencyResult.downloadResult.success) {
+            dependencyResult.message = dependencyResult.downloadResult.error.empty() ? "download failed" : dependencyResult.downloadResult.error;
+            fail_result(&dependencyResult, &dependencyPipeline, nullptr, "download", dependencyResult.message);
+            rollback_artifacts("download", false, false);
+            return dependencyResult;
+        }
+
+        dependencyPipeline.advance_step("download", TaskStatus::Succeeded, "artifact downloaded");
+        dependencyResult.logs.push_back("downloaded dependency artifact: " + dependencyRequest.projectId);
+
+        std::string deployError;
+        if (!ensure_directory(finalPath.parent_path(), &deployError)) {
+            dependencyResult.message = deployError;
+            fail_result(&dependencyResult, &dependencyPipeline, nullptr, "deploy", dependencyResult.message);
+            rollback_artifacts("deploy", false, false);
+            return dependencyResult;
+        }
+
+        std::error_code ec;
+        std::filesystem::copy_file(stagingPath, finalPath, std::filesystem::copy_options::overwrite_existing, ec);
+        if (ec) {
+            dependencyResult.message = ec.message();
+            fail_result(&dependencyResult, &dependencyPipeline, nullptr, "deploy", dependencyResult.message);
+            rollback_artifacts("deploy", false, false);
+            return dependencyResult;
+        }
+        dependencyResult.deployedPath = finalPath;
+        dependencyPipeline.advance_step("deploy", TaskStatus::Succeeded, "artifact deployed");
+        dependencyResult.logs.push_back("deployed to " + finalPath.generic_string());
+
+        dependencyResult.lock.provider = provider_name(dependencyRequest);
+        dependencyResult.lock.projectId = dependencyRequest.projectId;
+        dependencyResult.lock.versionId = version.versionId;
+        dependencyResult.lock.fileHash = dependencyResult.downloadResult.artifact.checksum;
+        dependencyResult.lock.installedPath = finalPath;
+        dependencyResult.lock.enabled = true;
+        dependencyResult.lock.dependencies = merge_dependencies(version, DependencyGraph{});
+
+        std::string lockError;
+        if (!write_text_file(dependencyResult.lockPath, content_lock_to_text(dependencyResult.lock), &lockError)) {
+            dependencyResult.message = lockError;
+            fail_result(&dependencyResult, &dependencyPipeline, nullptr, "lock", dependencyResult.message);
+            rollback_artifacts("lock", true, true);
+            return dependencyResult;
+        }
+        dependencyPipeline.advance_step("lock", TaskStatus::Succeeded, "content lock written");
+
+        {
+            std::error_code cleanupEc;
+            const auto removed = std::filesystem::remove_all(stagingPath, cleanupEc);
+            if (cleanupEc) {
+                dependencyResult.logs.push_back("cleanup: failed to remove staging " + stagingPath.generic_string() + ": " + cleanupEc.message());
+            } else if (removed > 0) {
+                dependencyResult.logs.push_back("cleanup: removed staging " + stagingPath.generic_string());
+            }
+        }
+
+        dependencyResult.plan = dependencyPipeline.plan();
+        dependencyResult.taskResult = dependencyPipeline.finish("repair dependency installed");
+        dependencyResult.logs.insert(dependencyResult.logs.end(), dependencyResult.taskResult.logs.begin(), dependencyResult.taskResult.logs.end());
+        dependencyResult.status = ContentInstallStatus::Succeeded;
+        dependencyResult.success = true;
+        dependencyResult.message = "repair dependency installed";
+        return dependencyResult;
+    };
+
+    std::vector<ContentInstallResult> repairedDependencies;
+    repairedDependencies.reserve(preview.graph.missing.size());
+
+    const auto rollback_repaired_dependencies = [&]() {
+        for (auto it = repairedDependencies.rbegin(); it != repairedDependencies.rend(); ++it) {
+            if (!it->deployedPath.empty()) {
+                cleanup_target(&result, "repair", "remove repaired artifact", it->deployedPath);
+            }
+            if (!it->lockPath.empty()) {
+                cleanup_target(&result, "repair", "remove repaired lock", it->lockPath);
+            }
+        }
+    };
+
+    for (const auto& missingId : preview.graph.missing) {
+        const auto* dependency = find_dependency(missingId);
+        const auto chosenVersion = choose_dependency_version(missingId, dependency);
+        if (!chosenVersion.has_value()) {
+            const auto message = "no version available for missing dependency " + missingId;
+            fail_result(&result, &pipeline, queue, "resolve", message);
+            add_rollback_event(&result, "resolve", "abort repair", std::filesystem::path(missingId), "blocked", message);
+            rollback_repaired_dependencies();
+            return result;
+        }
+
+        pipeline.advance_step("resolve", TaskStatus::Running, "repairing " + missingId);
+        if (queue && !result.queuedTaskId.empty()) {
+            queue->complete_step(result.queuedTaskId, "resolve", TaskStatus::Running, "repairing " + missingId);
+        }
+
+        const auto dependencyInstall = install_repaired_dependency(missingId, *chosenVersion);
+        add_logs(&result, dependencyInstall.logs, "repair[" + missingId + "]: ");
+        result.rollbackEvents.insert(result.rollbackEvents.end(), dependencyInstall.rollbackEvents.begin(), dependencyInstall.rollbackEvents.end());
+        if (!dependencyInstall.success) {
+            const auto message = "repair failed for dependency " + missingId + ": " + dependencyInstall.message;
+            fail_result(&result, &pipeline, queue, "download", message);
+            add_rollback_event(&result, "repair", "abort repair", dependencyInstall.deployedPath.empty() ? std::filesystem::path(missingId) : dependencyInstall.deployedPath, "failed", dependencyInstall.message);
+            rollback_repaired_dependencies();
+            return result;
+        }
+
+        repairedDependencies.push_back(dependencyInstall);
+        result.deployedPath = dependencyInstall.deployedPath;
+        result.lockPath = dependencyInstall.lockPath;
+        result.lock = dependencyInstall.lock;
+        result.downloadResult = dependencyInstall.downloadResult;
+        result.logs.push_back("repaired dependency: " + missingId);
+    }
+
+    pipeline.advance_step("resolve", TaskStatus::Succeeded, "all missing dependencies resolved");
+    pipeline.advance_step("download", TaskStatus::Succeeded, "all missing dependencies downloaded");
+    pipeline.advance_step("install", TaskStatus::Succeeded, "all missing dependencies installed");
+    if (queue && !result.queuedTaskId.empty()) {
+        queue->complete_step(result.queuedTaskId, "resolve", TaskStatus::Succeeded, "all missing dependencies resolved");
+        queue->complete_step(result.queuedTaskId, "download", TaskStatus::Succeeded, "all missing dependencies downloaded");
+        queue->complete_step(result.queuedTaskId, "install", TaskStatus::Succeeded, "all missing dependencies installed");
+    }
+
+    result.plan = pipeline.plan();
+    result.taskResult = pipeline.finish("repair plan completed");
+    result.logs.insert(result.logs.end(), result.taskResult.logs.begin(), result.taskResult.logs.end());
+    result.status = ContentInstallStatus::Succeeded;
+    result.success = true;
+    result.message = "repair plan completed";
     return result;
 }
 

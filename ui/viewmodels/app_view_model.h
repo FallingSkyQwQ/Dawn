@@ -10,6 +10,7 @@
 #include "dawn/core/service/task_queue.h"
 #include "dawn/core/download/download_service.h"
 #include "dawn/core/provider/modrinth_provider.h"
+#include "dawn/infra/net/http_client.h"
 
 #include <QObject>
 #include <QString>
@@ -19,6 +20,7 @@
 
 #include <cstddef>
 #include <memory>
+#include <optional>
 #include <vector>
 
 namespace dawn::ui {
@@ -35,7 +37,9 @@ class AppViewModel final : public QObject {
     Q_PROPERTY(QVariantMap installPreview READ installPreview NOTIFY dataChanged)
     Q_PROPERTY(QVariantList installDiagnostics READ installDiagnostics NOTIFY dataChanged)
     Q_PROPERTY(QVariantList rollbackEvents READ rollbackEvents NOTIFY dataChanged)
+    Q_PROPERTY(QVariantList repairExecutionLogs READ repairExecutionLogs NOTIFY dataChanged)
     Q_PROPERTY(QString installPreviewStatus READ installPreviewStatus NOTIFY dataChanged)
+    Q_PROPERTY(QString repairExecutionStatus READ repairExecutionStatus NOTIFY dataChanged)
     Q_PROPERTY(QString selectedContentProjectId READ selectedContentProjectId NOTIFY dataChanged)
     Q_PROPERTY(QString selectedContentVersionId READ selectedContentVersionId NOTIFY dataChanged)
     Q_PROPERTY(QString selectedTargetInstanceId READ selectedTargetInstanceId NOTIFY dataChanged)
@@ -49,6 +53,7 @@ class AppViewModel final : public QObject {
 public:
     explicit AppViewModel(QString dataRoot, QObject* parent = nullptr);
     AppViewModel(QString dataRoot, std::shared_ptr<dawn::core::IContentProvider> contentProvider, QObject* parent = nullptr);
+    AppViewModel(QString dataRoot, std::shared_ptr<dawn::core::IContentProvider> contentProvider, std::shared_ptr<dawn::infra::net::HttpClient> downloadClient, QObject* parent = nullptr);
 
     [[nodiscard]] QVariantList instanceCards() const;
     [[nodiscard]] QVariantList taskCards() const;
@@ -60,7 +65,9 @@ public:
     [[nodiscard]] QVariantMap installPreview() const;
     [[nodiscard]] QVariantList installDiagnostics() const;
     [[nodiscard]] QVariantList rollbackEvents() const;
+    [[nodiscard]] QVariantList repairExecutionLogs() const;
     [[nodiscard]] QString installPreviewStatus() const;
+    [[nodiscard]] QString repairExecutionStatus() const;
     [[nodiscard]] QString selectedContentProjectId() const;
     [[nodiscard]] QString selectedContentVersionId() const;
     [[nodiscard]] QString selectedTargetInstanceId() const;
@@ -78,6 +85,9 @@ public:
     Q_INVOKABLE bool selectTargetInstance(const QString& instanceId);
     Q_INVOKABLE bool selectInstallVersion(const QString& versionId);
     Q_INVOKABLE void refreshInstallPreview();
+    Q_INVOKABLE bool executeRepairPlan();
+    Q_INVOKABLE bool executeRepairPlan(const QString& planId);
+    Q_INVOKABLE bool executeRepairPlan(int planIndex);
     Q_INVOKABLE QVariantMap preflightFor(const QString& instanceId) const;
     Q_INVOKABLE void setActiveInstance(const QString& instanceId);
     Q_INVOKABLE void setActiveInstanceTab(const QString& tabId);
@@ -101,6 +111,7 @@ private:
     [[nodiscard]] QVariantMap rollbackEventToVariant(const dawn::core::ContentInstallResult::RollbackEvent& event) const;
     [[nodiscard]] std::size_t resourceCount(const dawn::core::InstanceManifest& manifest) const;
     [[nodiscard]] std::size_t activeInstanceIndex() const;
+    [[nodiscard]] std::optional<dawn::core::InstallRequest> currentInstallRequest() const;
     void updateSelectedContentPreview();
     void refreshSelectedContentVersions();
     void populateSearchResults(const dawn::core::SearchResult& result);
@@ -117,8 +128,10 @@ private:
     std::vector<dawn::core::ContentVersion> contentVersions_;
     std::vector<dawn::core::InstallDiagnostic> installDiagnostics_;
     std::vector<dawn::core::ContentInstallResult::RollbackEvent> rollbackEvents_;
+    std::vector<std::string> repairExecutionLogs_;
     dawn::core::DependencyCheckResult installPreview_;
     QString installPreviewStatus_ = QStringLiteral("No install preview run");
+    QString repairExecutionStatus_ = QStringLiteral("No repair run");
     QString selectedContentProjectId_;
     QString selectedContentVersionId_;
     std::vector<dawn::core::InstanceManifest> instances_;

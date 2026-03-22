@@ -76,14 +76,18 @@ QVariantList loaders_to_variant_list(const std::vector<dawn::core::LoaderType>& 
 } // namespace
 
 AppViewModel::AppViewModel(QString dataRoot, QObject* parent)
-    : AppViewModel(std::move(dataRoot), std::shared_ptr<dawn::core::IContentProvider>{}, parent) {
+    : AppViewModel(std::move(dataRoot), std::shared_ptr<dawn::core::IContentProvider>{}, std::shared_ptr<dawn::infra::net::HttpClient>{}, parent) {
 }
 
 AppViewModel::AppViewModel(QString dataRoot, std::shared_ptr<dawn::core::IContentProvider> contentProvider, QObject* parent)
+    : AppViewModel(std::move(dataRoot), std::move(contentProvider), std::shared_ptr<dawn::infra::net::HttpClient>{}, parent) {
+}
+
+AppViewModel::AppViewModel(QString dataRoot, std::shared_ptr<dawn::core::IContentProvider> contentProvider, std::shared_ptr<dawn::infra::net::HttpClient> downloadClient, QObject* parent)
     : QObject(parent)
     , dataRoot_(std::move(dataRoot))
     , instanceService_(std::filesystem::path(dataRoot_.toStdString()))
-    , previewDownloadService_(std::make_shared<dawn::infra::net::FakeHttpClient>())
+    , previewDownloadService_(downloadClient)
     , contentInstallService_(std::filesystem::path(dataRoot_.toStdString()), previewDownloadService_)
     , contentProvider_(contentProvider ? std::move(contentProvider) : std::make_shared<dawn::core::ModrinthProvider>()) {
     refresh();
@@ -191,8 +195,20 @@ QVariantList AppViewModel::rollbackEvents() const {
     return events;
 }
 
+QVariantList AppViewModel::repairExecutionLogs() const {
+    QVariantList logs;
+    for (const auto& log : repairExecutionLogs_) {
+        logs.push_back(to_qstring(log));
+    }
+    return logs;
+}
+
 QString AppViewModel::installPreviewStatus() const {
     return installPreviewStatus_;
+}
+
+QString AppViewModel::repairExecutionStatus() const {
+    return repairExecutionStatus_;
 }
 
 QString AppViewModel::selectedContentProjectId() const {
@@ -338,8 +354,10 @@ bool AppViewModel::selectInstallVersion(const QString& versionId) {
 void AppViewModel::refreshInstallPreview() {
     installDiagnostics_.clear();
     rollbackEvents_.clear();
+    repairExecutionLogs_.clear();
     installPreview_ = dawn::core::DependencyCheckResult{};
     installPreviewStatus_ = QStringLiteral("No install preview available");
+    repairExecutionStatus_ = QStringLiteral("No repair run");
 
     if (selectedContentProjectId_.isEmpty()) {
         if (!contentSearchResults_.empty()) {
@@ -384,6 +402,65 @@ void AppViewModel::refreshInstallPreview() {
     emit dataChanged();
 }
 
+bool AppViewModel::executeRepairPlan() {
+    return executeRepairPlan(0);
+}
+
+bool AppViewModel::executeRepairPlan(const QString& planId) {
+    if (planId.isEmpty()) {
+        return executeRepairPlan();
+    }
+    if (installPreview_.repairPlanAvailable && to_qstring(installPreview_.repairPlan.id) == planId) {
+        return executeRepairPlan();
+    }
+    repairExecutionStatus_ = QStringLiteral("Repair plan not found");
+    repairExecutionLogs_.clear();
+    emit dataChanged();
+    return false;
+}
+
+bool AppViewModel::executeRepairPlan(int planIndex) {
+    if (planIndex != 0) {
+        repairExecutionStatus_ = QStringLiteral("Repair plan not available");
+        repairExecutionLogs_.clear();
+        emit dataChanged();
+        return false;
+    }
+
+    const auto request = currentInstallRequest();
+    if (!request.has_value()) {
+        repairExecutionStatus_ = QStringLiteral("No install request selected");
+        repairExecutionLogs_.clear();
+        emit dataChanged();
+        return false;
+    }
+
+    if (!contentProvider_) {
+        contentProvider_ = std::make_shared<dawn::core::ModrinthProvider>();
+    }
+
+    const auto result = contentInstallService_.execute_repair_plan(*request, installPreview_, *contentProvider_, &taskQueue_);
+    const auto logs = result.logs;
+    const auto rollbackEvents = result.rollbackEvents;
+    const auto diagnostics = result.diagnostics;
+    repairExecutionLogs_.clear();
+    for (const auto& log : logs) {
+        repairExecutionLogs_.push_back(log);
+    }
+    if (result.success) {
+        refreshInstallPreview();
+        repairExecutionLogs_.clear();
+        for (const auto& log : logs) {
+            repairExecutionLogs_.push_back(log);
+        }
+    }
+    rollbackEvents_ = rollbackEvents;
+    installDiagnostics_ = diagnostics;
+    repairExecutionStatus_ = to_qstring(result.message.empty() ? (result.success ? "Repair completed" : "Repair failed") : result.message);
+    emit dataChanged();
+    return result.success;
+}
+
 void AppViewModel::updateSelectedContentPreview() {
     refreshInstallPreview();
 }
@@ -411,6 +488,20 @@ void AppViewModel::refreshSelectedContentVersions() {
 
 void AppViewModel::populateSearchResults(const dawn::core::SearchResult& result) {
     contentSearchResults_ = result.items;
+}
+
+std::optional<dawn::core::InstallRequest> AppViewModel::currentInstallRequest() const {
+    if (selectedContentProjectId_.isEmpty() || selectedContentVersionId_.isEmpty() || activeInstanceId().isEmpty()) {
+        return std::nullopt;
+    }
+
+    dawn::core::InstallRequest request;
+    request.provider = "modrinth";
+    request.instanceId = to_std(activeInstanceId());
+    request.projectId = to_std(selectedContentProjectId_);
+    request.versionId = to_std(selectedContentVersionId_);
+    request.projectType = contentSearchQuery_.projectType;
+    return request;
 }
 
 QVariantMap AppViewModel::preflightFor(const QString& instanceId) const {
