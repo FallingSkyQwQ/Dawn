@@ -24,6 +24,7 @@ cmake --build build
 ```
 
 If the `external/FluentUIbi` submodule is available, set `-DDAWN_USE_FLUENTUIBI=ON`. When the submodule is absent, Dawn falls back to a local Qt Quick shell so the project still builds.
+On Windows, the test targets inject the MinGW runtime `PATH` at launch to avoid DLL conflicts in multi-toolchain environments.
 
 ## Runtime modes
 

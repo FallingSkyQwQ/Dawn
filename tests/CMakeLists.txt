@@ -11,6 +11,29 @@ if(NOT TARGET GTest::gtest)
 endif()
 
 if(TARGET GTest::gtest)
+    set(_dawn_test_runtime_path "")
+    if(WIN32)
+        if(CMAKE_CXX_COMPILER)
+            get_filename_component(_dawn_compiler_dir "${CMAKE_CXX_COMPILER}" DIRECTORY)
+            if(EXISTS "${_dawn_compiler_dir}/libstdc++-6.dll")
+                set(_dawn_test_runtime_path "${_dawn_compiler_dir}")
+            endif()
+        endif()
+
+        if(_dawn_test_runtime_path STREQUAL "" AND EXISTS "C:/Qt/6.10.2/mingw_64/bin/libstdc++-6.dll")
+            set(_dawn_test_runtime_path "C:/Qt/6.10.2/mingw_64/bin")
+        endif()
+    endif()
+
+    function(dawn_add_test_with_runtime_path test_name target_name)
+        if(WIN32 AND NOT _dawn_test_runtime_path STREQUAL "")
+            set(_dawn_test_path_env "PATH=${_dawn_test_runtime_path};$ENV{PATH}")
+            add_test(NAME "${test_name}" COMMAND "${CMAKE_COMMAND}" -E env "${_dawn_test_path_env}" $<TARGET_FILE:${target_name}>)
+        else()
+            add_test(NAME "${test_name}" COMMAND $<TARGET_FILE:${target_name}>)
+        endif()
+    endfunction()
+
     add_executable(dawn_tests)
 
     target_sources(dawn_tests
@@ -38,7 +61,7 @@ if(TARGET GTest::gtest)
             GTest::gtest_main
     )
 
-    add_test(NAME dawn_tests COMMAND dawn_tests)
+    dawn_add_test_with_runtime_path(dawn_tests dawn_tests)
 
     if(TARGET dawn_ui)
         add_executable(dawn_ui_tests)
@@ -55,7 +78,7 @@ if(TARGET GTest::gtest)
                 Qt6::Core
         )
 
-        add_test(NAME dawn_ui_tests COMMAND dawn_ui_tests)
+        dawn_add_test_with_runtime_path(dawn_ui_tests dawn_ui_tests)
     endif()
 else()
     message(FATAL_ERROR "GoogleTest could not be configured.")
