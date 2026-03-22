@@ -45,6 +45,9 @@ class AppViewModel final : public QObject {
     Q_PROPERTY(QString eventCenterTypeFilter READ eventCenterTypeFilter WRITE setEventCenterTypeFilter NOTIFY dataChanged)
     Q_PROPERTY(QVariantMap selectedEventContext READ selectedEventContext NOTIFY dataChanged)
     Q_PROPERTY(QString selectedEventId READ selectedEventId NOTIFY dataChanged)
+    Q_PROPERTY(QString eventTargetPage READ eventTargetPage NOTIFY dataChanged)
+    Q_PROPERTY(QString eventTargetInstanceId READ eventTargetInstanceId NOTIFY dataChanged)
+    Q_PROPERTY(QString eventTargetProjectId READ eventTargetProjectId NOTIFY dataChanged)
     Q_PROPERTY(QVariantList repairExecutionLogs READ repairExecutionLogs NOTIFY dataChanged)
     Q_PROPERTY(QString contentInstallStatus READ contentInstallStatus NOTIFY dataChanged)
     Q_PROPERTY(QVariantMap lastDroppedFileResult READ lastDroppedFileResult NOTIFY dataChanged)
@@ -93,6 +96,9 @@ public:
     [[nodiscard]] QString eventCenterTypeFilter() const;
     [[nodiscard]] QVariantMap selectedEventContext() const;
     [[nodiscard]] QString selectedEventId() const;
+    [[nodiscard]] QString eventTargetPage() const;
+    [[nodiscard]] QString eventTargetInstanceId() const;
+    [[nodiscard]] QString eventTargetProjectId() const;
     [[nodiscard]] QVariantList repairExecutionLogs() const;
     [[nodiscard]] QString contentInstallStatus() const;
     [[nodiscard]] QVariantMap lastDroppedFileResult() const;
@@ -137,6 +143,7 @@ public:
     Q_INVOKABLE void setInstallLogSourceFilter(const QString& filter);
     Q_INVOKABLE void setEventCenterTypeFilter(const QString& filter);
     Q_INVOKABLE bool selectEvent(const QString& eventId);
+    Q_INVOKABLE bool navigateToEventContext();
     Q_INVOKABLE QVariantMap handleDroppedFile(const QString& path, const QString& instanceId);
     Q_INVOKABLE void setUiMode(const QString& mode);
     Q_INVOKABLE void setJavaStrategy(const QString& strategy);
@@ -219,6 +226,9 @@ private:
     QString eventCenterTypeFilter_ = QStringLiteral("all");
     QString selectedEventId_;
     QVariantMap selectedEventContext_;
+    QString eventTargetPage_;
+    QString eventTargetInstanceId_;
+    QString eventTargetProjectId_;
     quint64 eventSequence_ = 0;
     std::vector<std::string> repairExecutionLogs_;
     QString contentInstallStatus_ = QStringLiteral("No content install run");

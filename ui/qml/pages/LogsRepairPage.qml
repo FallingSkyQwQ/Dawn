@@ -214,7 +214,7 @@ Item {
                             spacing: 4
 
                             Text {
-                                text: ((appViewModel.selectedEventContext.eventId || "").length > 0) ? ("Selected: " + appViewModel.selectedEventContext.eventType + " -> " + appViewModel.selectedEventContext.pageHint) : "Select an event to preview context."
+                                text: ((appViewModel.selectedEventContext.eventId || "").length > 0) ? ("Selected: " + appViewModel.selectedEventContext.eventType + " -> " + appViewModel.selectedEventContext.eventTargetPage) : "Select an event to preview context."
                                 color: "#f5f8fb"
                                 font.pixelSize: 13
                                 font.bold: true
@@ -228,7 +228,7 @@ Item {
                             }
 
                             Text {
-                                text: ((appViewModel.selectedEventContext.instanceId || "").length > 0) ? ("Instance: " + appViewModel.selectedEventContext.instanceId) : (((appViewModel.selectedEventContext.projectId || "").length > 0) ? ("Project: " + appViewModel.selectedEventContext.projectId + "  |  Version: " + appViewModel.selectedEventContext.versionId) : "No target context available.")
+                                text: ((appViewModel.eventTargetInstanceId || "").length > 0) ? ("Instance: " + appViewModel.eventTargetInstanceId) : (((appViewModel.eventTargetProjectId || "").length > 0) ? ("Project: " + appViewModel.eventTargetProjectId + "  |  Version: " + appViewModel.selectedEventContext.versionId) : "No target context available.")
                                 color: "#8ea0b7"
                                 font.pixelSize: 11
                                 wrapMode: Text.WordWrap

@@ -210,9 +210,9 @@ TEST(AppViewModel, ExecuteRepairPlanReportsStatusAndLogs) {
     }));
     EXPECT_GE(viewModel.taskCount(), 1);
 
-    const auto installLogs = viewModel.installLogs();
-    ASSERT_FALSE(installLogs.isEmpty());
-    EXPECT_EQ(installLogs.front().toMap().value("sourceType").toString(), QStringLiteral("repair"));
+    const auto eventCenter = viewModel.eventCenter();
+    ASSERT_FALSE(eventCenter.isEmpty());
+    EXPECT_EQ(eventCenter.front().toMap().value("sourceType").toString(), QStringLiteral("repair"));
 
     std::filesystem::remove_all(root);
 }
@@ -292,23 +292,23 @@ TEST(AppViewModel, HandleDroppedFileInstallsLocalModAndExposesResult) {
     EXPECT_EQ(lastResult.value("targetInstanceId").toString(), QString::fromStdString(instance.id));
     EXPECT_EQ(lastResult.value("status").toString(), QStringLiteral("succeeded"));
 
-    const auto installLogs = viewModel.installLogs();
-    ASSERT_EQ(installLogs.size(), 1);
-    EXPECT_EQ(installLogs.front().toMap().value("type").toString(), QStringLiteral("drag-install"));
-    EXPECT_EQ(installLogs.front().toMap().value("sourceType").toString(), QStringLiteral("local_drop"));
-    EXPECT_EQ(installLogs.front().toMap().value("result").toString(), QStringLiteral("succeeded"));
-    EXPECT_EQ(installLogs.front().toMap().value("targetInstanceId").toString(), QString::fromStdString(instance.id));
+    const auto eventCenter = viewModel.eventCenter();
+    ASSERT_EQ(eventCenter.size(), 1);
+    EXPECT_EQ(eventCenter.front().toMap().value("type").toString(), QStringLiteral("drag-install"));
+    EXPECT_EQ(eventCenter.front().toMap().value("sourceType").toString(), QStringLiteral("local_drop"));
+    EXPECT_EQ(eventCenter.front().toMap().value("result").toString(), QStringLiteral("succeeded"));
+    EXPECT_EQ(eventCenter.front().toMap().value("targetInstanceId").toString(), QString::fromStdString(instance.id));
 
     EXPECT_FALSE(viewModel.executeRepairPlan(QStringLiteral("missing")));
-    EXPECT_EQ(viewModel.installLogs().size(), 2);
+    EXPECT_EQ(viewModel.eventCenter().size(), 2);
 
     viewModel.setInstallLogFilter(QStringLiteral("success"));
-    EXPECT_EQ(viewModel.installLogs().size(), 1);
-    EXPECT_TRUE(viewModel.installLogs().front().toMap().value("success").toBool());
+    EXPECT_EQ(viewModel.eventCenter().size(), 1);
+    EXPECT_TRUE(viewModel.eventCenter().front().toMap().value("success").toBool());
 
     viewModel.setInstallLogFilter(QStringLiteral("failure"));
-    EXPECT_EQ(viewModel.installLogs().size(), 1);
-    EXPECT_FALSE(viewModel.installLogs().front().toMap().value("success").toBool());
+    EXPECT_EQ(viewModel.eventCenter().size(), 1);
+    EXPECT_FALSE(viewModel.eventCenter().front().toMap().value("success").toBool());
 
     std::filesystem::remove_all(root);
 }
@@ -364,7 +364,7 @@ TEST(AppViewModel, InstallLogsClassifySourcesAndCombineFilters) {
 
     EXPECT_FALSE(viewModel.executeRepairPlan(QStringLiteral("missing")));
 
-    const auto logs = viewModel.installLogs();
+    const auto logs = viewModel.eventCenter();
     ASSERT_EQ(logs.size(), 3);
 
     EXPECT_EQ(logs[0].toMap().value("sourceType").toString(), QStringLiteral("repair"));
@@ -373,28 +373,28 @@ TEST(AppViewModel, InstallLogsClassifySourcesAndCombineFilters) {
 
     viewModel.setInstallLogFilter(QStringLiteral("success"));
     viewModel.setInstallLogSourceFilter(QStringLiteral("local_drop"));
-    auto filtered = viewModel.installLogs();
+    auto filtered = viewModel.eventCenter();
     ASSERT_EQ(filtered.size(), 1);
     EXPECT_EQ(filtered.front().toMap().value("sourceType").toString(), QStringLiteral("local_drop"));
     EXPECT_TRUE(filtered.front().toMap().value("success").toBool());
 
     viewModel.setInstallLogFilter(QStringLiteral("success"));
     viewModel.setInstallLogSourceFilter(QStringLiteral("remote_content"));
-    filtered = viewModel.installLogs();
+    filtered = viewModel.eventCenter();
     ASSERT_EQ(filtered.size(), 1);
     EXPECT_EQ(filtered.front().toMap().value("sourceType").toString(), QStringLiteral("remote_content"));
     EXPECT_TRUE(filtered.front().toMap().value("success").toBool());
 
     viewModel.setInstallLogFilter(QStringLiteral("failure"));
     viewModel.setInstallLogSourceFilter(QStringLiteral("repair"));
-    filtered = viewModel.installLogs();
+    filtered = viewModel.eventCenter();
     ASSERT_EQ(filtered.size(), 1);
     EXPECT_EQ(filtered.front().toMap().value("sourceType").toString(), QStringLiteral("repair"));
     EXPECT_FALSE(filtered.front().toMap().value("success").toBool());
 
     viewModel.setInstallLogFilter(QStringLiteral("failure"));
     viewModel.setInstallLogSourceFilter(QStringLiteral("all"));
-    filtered = viewModel.installLogs();
+    filtered = viewModel.eventCenter();
     ASSERT_EQ(filtered.size(), 1);
     EXPECT_EQ(filtered.front().toMap().value("sourceType").toString(), QStringLiteral("repair"));
 
@@ -497,9 +497,24 @@ TEST(AppViewModel, EventCenterQueuesFiltersAndSelectsContext) {
     EXPECT_EQ(viewModel.selectedEventContext().value("projectId").toString(), QStringLiteral("event-project"));
     EXPECT_EQ(viewModel.selectedEventContext().value("versionId").toString(), QStringLiteral("3.0.0"));
     EXPECT_EQ(viewModel.selectedEventContext().value("pageHint").toString(), QStringLiteral("content"));
+    EXPECT_EQ(viewModel.eventTargetPage(), QStringLiteral("content"));
+    EXPECT_EQ(viewModel.eventTargetInstanceId(), instanceId);
+    EXPECT_EQ(viewModel.eventTargetProjectId(), QStringLiteral("event-project"));
     EXPECT_EQ(viewModel.selectedContentProjectId(), QStringLiteral("event-project"));
     EXPECT_EQ(viewModel.selectedContentVersionId(), QStringLiteral("3.0.0"));
     EXPECT_EQ(viewModel.activeInstanceId(), instanceId);
+    EXPECT_TRUE(viewModel.navigateToEventContext());
+    EXPECT_EQ(viewModel.activeInstanceTabId(), QStringLiteral("overview"));
+
+    viewModel.setEventCenterTypeFilter(QStringLiteral("repair"));
+    events = viewModel.eventCenter();
+    ASSERT_EQ(events.size(), 1);
+    const auto repairEventId = events.front().toMap().value("eventId").toString();
+    EXPECT_TRUE(viewModel.selectEvent(repairEventId));
+    EXPECT_EQ(viewModel.eventTargetPage(), QStringLiteral("logs"));
+    EXPECT_EQ(viewModel.eventTargetInstanceId(), instanceId);
+    EXPECT_TRUE(viewModel.navigateToEventContext());
+    EXPECT_EQ(viewModel.activeInstanceTabId(), QStringLiteral("logs"));
 
     std::filesystem::remove_all(root);
 }

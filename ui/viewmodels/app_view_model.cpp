@@ -357,6 +357,18 @@ QString AppViewModel::selectedEventId() const {
     return selectedEventId_;
 }
 
+QString AppViewModel::eventTargetPage() const {
+    return eventTargetPage_;
+}
+
+QString AppViewModel::eventTargetInstanceId() const {
+    return eventTargetInstanceId_;
+}
+
+QString AppViewModel::eventTargetProjectId() const {
+    return eventTargetProjectId_;
+}
+
 QVariantList AppViewModel::repairExecutionLogs() const {
     QVariantList logs;
     for (const auto& log : repairExecutionLogs_) {
@@ -753,6 +765,12 @@ bool AppViewModel::selectEvent(const QString& eventId) {
     const auto& entry = installLogs_[selectedIndex];
     selectedEventId_ = entry.eventId;
     selectedEventContext_ = eventCenterContextToVariant(entry);
+    eventTargetPage_ = entry.pageHint.isEmpty() ? QStringLiteral("logs") : entry.pageHint;
+    eventTargetInstanceId_ = entry.targetInstanceId;
+    eventTargetProjectId_ = entry.projectId;
+    selectedEventContext_.insert("eventTargetPage", eventTargetPage_);
+    selectedEventContext_.insert("eventTargetInstanceId", eventTargetInstanceId_);
+    selectedEventContext_.insert("eventTargetProjectId", eventTargetProjectId_);
 
     if (!entry.targetInstanceId.isEmpty()) {
         setActiveInstance(entry.targetInstanceId);
@@ -762,9 +780,40 @@ bool AppViewModel::selectEvent(const QString& eventId) {
         selectedContentVersionId_ = entry.versionId;
         refreshSelectedContentVersions();
     }
-    if (!entry.pageHint.isEmpty()) {
-        emit navigateToPageRequested(entry.pageIndex);
+    navigateToEventContext();
+    emit dataChanged();
+    return true;
+}
+
+bool AppViewModel::navigateToEventContext() {
+    if (eventTargetPage_.isEmpty()) {
+        return false;
     }
+
+    if (eventTargetPage_ == QStringLiteral("instances")) {
+        if (!eventTargetInstanceId_.isEmpty()) {
+            setActiveInstance(eventTargetInstanceId_);
+        }
+        const auto eventType = selectedEventContext_.value("eventType").toString().toLower();
+        const auto sourceType = selectedEventContext_.value("sourceType").toString().toLower();
+        if (eventType == QStringLiteral("repair") || eventType == QStringLiteral("diagnostic") || sourceType == QStringLiteral("repair")) {
+            setActiveInstanceTab(QStringLiteral("logs"));
+        } else {
+            setActiveInstanceTab(QStringLiteral("overview"));
+        }
+    } else if (eventTargetPage_ == QStringLiteral("content")) {
+        if (!eventTargetProjectId_.isEmpty()) {
+            selectedContentProjectId_ = eventTargetProjectId_;
+            refreshSelectedContentVersions();
+        }
+        const auto versionId = selectedEventContext_.value("versionId").toString();
+        if (!versionId.isEmpty()) {
+            selectedContentVersionId_ = versionId;
+            refreshSelectedContentVersions();
+        }
+    }
+
+    emit navigateToPageRequested(page_index_for_hint(eventTargetPage_));
     emit dataChanged();
     return true;
 }
@@ -1325,6 +1374,9 @@ QVariantMap AppViewModel::installLogToVariant(const InstallLogEntry& entry) cons
         {"summary", entry.summary},
         {"pageHint", entry.pageHint},
         {"pageIndex", entry.pageIndex},
+        {"eventTargetPage", entry.pageHint},
+        {"eventTargetInstanceId", entry.targetInstanceId},
+        {"eventTargetProjectId", entry.projectId},
         {"success", entry.success},
         {"selected", entry.selected},
     };
@@ -1345,6 +1397,9 @@ QVariantMap AppViewModel::eventCenterContextToVariant(const InstallLogEntry& ent
         {"summary", entry.summary},
         {"pageHint", entry.pageHint},
         {"pageIndex", entry.pageIndex},
+        {"eventTargetPage", entry.pageHint},
+        {"eventTargetInstanceId", entry.targetInstanceId},
+        {"eventTargetProjectId", entry.projectId},
         {"success", entry.success},
         {"selected", entry.selected},
     };

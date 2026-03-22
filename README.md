@@ -40,6 +40,7 @@ On Windows, the test targets inject the MinGW runtime `PATH` at launch to avoid 
 * `ui/` contains QML pages and optional Qt-facing view models.
 
 The code is layered so that the core library can be tested without Qt.
+`EventCenter` is the single history stream shared by `ContentCenterPage`, `InstancesPage`, and `LogsRepairPage`; selection always resolves to a target page plus context.
 
 ## Stage Notes
 

@@ -333,9 +333,9 @@ Item {
 
                     DawnCard {
                         Layout.fillWidth: true
-                        Layout.preferredHeight: 320
-                        title: "Install History"
-                        subtitle: "Unified history for local drops, remote content installs, and repairs."
+                        Layout.preferredHeight: 330
+                        title: "Event Center"
+                        subtitle: "Unified install, repair, download, and diagnostic history."
 
                         Column {
                             anchors.fill: parent
@@ -366,16 +366,38 @@ Item {
                                         { "label": "All Sources", "value": "all" },
                                         { "label": "Local Drop", "value": "local_drop" },
                                         { "label": "Remote Content", "value": "remote_content" },
-                                        { "label": "Repair", "value": "repair" }
+                                        { "label": "Repair", "value": "repair" },
+                                        { "label": "Diagnostic", "value": "diagnostic" }
                                     ]
-                                    currentIndex: root.appViewModel.installLogSourceFilter === "local_drop" ? 1 : (root.appViewModel.installLogSourceFilter === "remote_content" ? 2 : (root.appViewModel.installLogSourceFilter === "repair" ? 3 : 0))
+                                    currentIndex: root.appViewModel.installLogSourceFilter === "local_drop" ? 1 : (root.appViewModel.installLogSourceFilter === "remote_content" ? 2 : (root.appViewModel.installLogSourceFilter === "repair" ? 3 : (root.appViewModel.installLogSourceFilter === "diagnostic" ? 4 : 0)))
                                     onActivated: root.appViewModel.setInstallLogSourceFilter(currentValue)
+                                }
+
+                                ComboBox {
+                                    Layout.preferredWidth: 150
+                                    textRole: "label"
+                                    valueRole: "value"
+                                    model: [
+                                        { "label": "All Types", "value": "all" },
+                                        { "label": "Install", "value": "install" },
+                                        { "label": "Download", "value": "download" },
+                                        { "label": "Repair", "value": "repair" },
+                                        { "label": "Diagnostic", "value": "diagnostic" }
+                                    ]
+                                    currentIndex: root.appViewModel.eventCenterTypeFilter === "install" ? 1 : (root.appViewModel.eventCenterTypeFilter === "download" ? 2 : (root.appViewModel.eventCenterTypeFilter === "repair" ? 3 : (root.appViewModel.eventCenterTypeFilter === "diagnostic" ? 4 : 0)))
+                                    onActivated: root.appViewModel.setEventCenterTypeFilter(currentValue)
+                                }
+
+                                Button {
+                                    text: "Open Context"
+                                    enabled: (root.appViewModel.selectedEventContext.eventId || "").length > 0
+                                    onClicked: root.appViewModel.navigateToEventContext()
                                 }
 
                                 Item { Layout.fillWidth: true }
 
                                 Text {
-                                    text: root.appViewModel.installLogs.length + " entries"
+                                    text: root.appViewModel.eventCenter.length + " entries"
                                     color: "#8ea0b7"
                                     font.pixelSize: 11
                                 }
@@ -383,26 +405,38 @@ Item {
 
                             ListView {
                                 width: parent.width
-                                height: 230
+                                height: 208
                                 clip: true
                                 spacing: 8
-                                model: root.appViewModel.installLogs
+                                model: root.appViewModel.eventCenter
 
                                 delegate: Rectangle {
                                     width: ListView.view.width
                                     height: 74
                                     radius: 12
-                                    color: modelData.success ? Qt.rgba(0.14, 0.24, 0.18, 0.95) : Qt.rgba(0.28, 0.17, 0.16, 0.95)
-                                    border.color: Qt.rgba(1, 1, 1, 0.05)
+                                    color: modelData.selected ? Qt.rgba(0.24, 0.35, 0.52, 0.96) : (modelData.success ? Qt.rgba(0.14, 0.24, 0.18, 0.95) : Qt.rgba(0.28, 0.17, 0.16, 0.95))
+                                    border.color: modelData.selected ? Qt.rgba(0.48, 0.64, 0.98, 0.55) : Qt.rgba(1, 1, 1, 0.05)
+
+                                    MouseArea {
+                                        anchors.fill: parent
+                                        onClicked: root.appViewModel.selectEvent(modelData.eventId)
+                                    }
 
                                     Column {
                                         anchors.fill: parent
                                         anchors.margins: 10
                                         spacing: 3
-                                        Text { text: modelData.time + "  |  " + modelData.type + "  |  " + modelData.sourceType + "  |  " + modelData.result; color: "#f5f8fb"; font.pixelSize: 12; font.bold: true }
+                                        Text { text: modelData.time + "  |  " + modelData.eventType + "  |  " + modelData.sourceType + "  |  " + modelData.result; color: "#f5f8fb"; font.pixelSize: 12; font.bold: true }
                                         Text { text: "Target: " + modelData.targetInstanceId + "  |  " + modelData.summary; color: "#dce5f0"; font.pixelSize: 11; wrapMode: Text.WordWrap }
                                     }
                                 }
+                            }
+
+                            Text {
+                                text: (root.appViewModel.selectedEventContext.eventId || "").length > 0 ? ("Context: " + root.appViewModel.selectedEventContext.eventType + " -> " + root.appViewModel.selectedEventContext.eventTargetPage + " | Instance " + (root.appViewModel.eventTargetInstanceId.length > 0 ? root.appViewModel.eventTargetInstanceId : "none") + " | Project " + (root.appViewModel.eventTargetProjectId.length > 0 ? root.appViewModel.eventTargetProjectId : "none")) : "Select an event to preview its target context."
+                                color: "#8ea0b7"
+                                font.pixelSize: 11
+                                wrapMode: Text.WordWrap
                             }
                         }
                     }
