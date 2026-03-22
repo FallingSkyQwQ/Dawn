@@ -17,3 +17,8 @@ cmake-build-*/
 *.lib
 *.a
 *.o
+tmp_*.err
+tmp_*.txt
+dawn_*.err
+dawn_*.txt
+dawn_*test*.txt

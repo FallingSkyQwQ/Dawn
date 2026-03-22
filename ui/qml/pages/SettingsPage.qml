@@ -29,15 +29,17 @@ Item {
                     spacing: 8
 
                     Text {
-                        text: "The initial pass focuses on architecture and persistence rather than every panel being interactive."
+                        text: "The initial pass now exposes persistent usability controls instead of static copy."
                         color: "#dce5f0"
                         font.pixelSize: 14
+                        wrapMode: Text.WordWrap
                     }
 
                     Text {
-                        text: "All settings groups are represented so the information architecture matches the product brief."
+                        text: "First launch completion, novice/advanced mode, low-disk threshold, and cache maintenance are wired through the view model."
                         color: "#8ea0b7"
                         font.pixelSize: 12
+                        wrapMode: Text.WordWrap
                     }
                 }
             }
@@ -50,61 +52,130 @@ Item {
 
                 DawnCard {
                     Layout.fillWidth: true
-                    Layout.preferredHeight: 180
-                    title: "Theme"
-                    subtitle: "Dark, light, and accent-aware styling."
+                    Layout.preferredHeight: 190
+                    title: "Experience Mode"
+                    subtitle: "Switch between novice and advanced controls."
 
-                    Text {
+                    Column {
                         anchors.fill: parent
-                        text: "Follow system theme, instance accent color, and density mode."
-                        color: "#dce5f0"
-                        font.pixelSize: 14
-                        wrapMode: Text.WordWrap
+                        spacing: 10
+
+                        Switch {
+                            text: appViewModel.uiMode === "advanced" ? "Advanced mode" : "Novice mode"
+                            checked: appViewModel.uiMode === "advanced"
+                            onToggled: appViewModel.setUiMode(checked ? "advanced" : "novice")
+                        }
+
+                        Text {
+                            text: appViewModel.uiMode === "advanced"
+                                  ? "Advanced mode exposes the full control surface."
+                                  : "Novice mode keeps the default flow compact."
+                            color: "#dce5f0"
+                            font.pixelSize: 13
+                            wrapMode: Text.WordWrap
+                        }
                     }
                 }
 
                 DawnCard {
                     Layout.fillWidth: true
-                    Layout.preferredHeight: 180
-                    title: "Download"
-                    subtitle: "Concurrency, caching, and verification."
+                    Layout.preferredHeight: 190
+                    title: "First Launch"
+                    subtitle: "Keep the onboarding card visible until setup is complete."
 
-                    Text {
+                    Column {
                         anchors.fill: parent
-                        text: "The queue and repository layers already exist, while the online downloader is reserved for the next stage."
-                        color: "#dce5f0"
-                        font.pixelSize: 14
-                        wrapMode: Text.WordWrap
+                        spacing: 10
+
+                        Text {
+                            text: appViewModel.firstLaunchCompleted ? "First launch is marked complete." : "First launch wizard is still active."
+                            color: "#dce5f0"
+                            font.pixelSize: 13
+                            wrapMode: Text.WordWrap
+                        }
+
+                        Button {
+                            text: appViewModel.firstLaunchCompleted ? "Already Completed" : "Complete First Launch"
+                            enabled: !appViewModel.firstLaunchCompleted
+                            onClicked: appViewModel.completeFirstLaunch()
+                        }
                     }
                 }
 
                 DawnCard {
                     Layout.fillWidth: true
-                    Layout.preferredHeight: 180
-                    title: "Java"
-                    subtitle: "Discovered runtimes and per-instance profiles."
+                    Layout.preferredHeight: 220
+                    title: "Low Disk Threshold"
+                    subtitle: "Warn when the data root free space is too low."
 
-                    Text {
+                    Column {
                         anchors.fill: parent
-                        text: "The launch runtime exposes a placeholder command builder so Java policies can be wired later without breaking the shell."
-                        color: "#dce5f0"
-                        font.pixelSize: 14
-                        wrapMode: Text.WordWrap
+                        spacing: 10
+
+                        RowLayout {
+                            width: parent.width
+                            spacing: 10
+
+                            Text {
+                                text: "Threshold (GB)"
+                                color: "#dce5f0"
+                                font.pixelSize: 13
+                            }
+
+                            SpinBox {
+                                id: thresholdSpin
+                                from: 0
+                                to: 1024
+                                value: appViewModel.lowDiskThresholdGb
+                                editable: true
+                                onValueModified: appViewModel.setLowDiskThresholdGb(value)
+                            }
+                        }
+
+                        Text {
+                            text: appViewModel.lowDiskWarning.length > 0 ? appViewModel.lowDiskWarning : "No low disk warning at the moment."
+                            color: appViewModel.lowDiskWarning.length > 0 ? "#f2c5ba" : "#dce5f0"
+                            font.pixelSize: 13
+                            wrapMode: Text.WordWrap
+                        }
+
+                        Text {
+                            text: "Probe path: " + appViewModel.diskSpaceStatus.path
+                            color: "#8ea0b7"
+                            font.pixelSize: 12
+                            wrapMode: Text.WordWrap
+                        }
                     }
                 }
 
                 DawnCard {
                     Layout.fillWidth: true
-                    Layout.preferredHeight: 180
-                    title: "Backups"
-                    subtitle: "Snapshots and restore points."
+                    Layout.preferredHeight: 220
+                    title: "Cache Maintenance"
+                    subtitle: "Clean the cache directory and inspect the last cleanup summary."
 
-                    Text {
+                    Column {
                         anchors.fill: parent
-                        text: "Backup policy and archive support are intentionally staged after the core instance and launch flows."
-                        color: "#dce5f0"
-                        font.pixelSize: 14
-                        wrapMode: Text.WordWrap
+                        spacing: 10
+
+                        Button {
+                            text: "Clear Cache"
+                            onClicked: appViewModel.clearCache()
+                        }
+
+                        Text {
+                            text: appViewModel.cacheCleanupSummary.message.length > 0 ? appViewModel.cacheCleanupSummary.message : "No cache cleanup has been run yet."
+                            color: "#dce5f0"
+                            font.pixelSize: 13
+                            wrapMode: Text.WordWrap
+                        }
+
+                        Text {
+                            text: "Freed: " + appViewModel.cacheCleanupSummary.bytesFreed + " bytes  |  Files: " + appViewModel.cacheCleanupSummary.filesRemoved + "  |  Directories: " + appViewModel.cacheCleanupSummary.directoriesRemoved
+                            color: "#8ea0b7"
+                            font.pixelSize: 12
+                            wrapMode: Text.WordWrap
+                        }
                     }
                 }
             }

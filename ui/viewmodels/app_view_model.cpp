@@ -86,11 +86,15 @@ AppViewModel::AppViewModel(QString dataRoot, std::shared_ptr<dawn::core::IConten
 AppViewModel::AppViewModel(QString dataRoot, std::shared_ptr<dawn::core::IContentProvider> contentProvider, std::shared_ptr<dawn::infra::net::HttpClient> downloadClient, QObject* parent)
     : QObject(parent)
     , dataRoot_(std::move(dataRoot))
+    , settingsService_(std::filesystem::path(dataRoot_.toStdString()))
+    , settings_(settingsService_.load())
+    , diskSpaceStatus_(dawn::core::SettingsService::check_low_disk_space(std::filesystem::path(dataRoot_.toStdString()), settings_.lowDiskThresholdGb))
     , instanceService_(std::filesystem::path(dataRoot_.toStdString()))
     , previewDownloadService_(downloadClient)
     , contentInstallService_(std::filesystem::path(dataRoot_.toStdString()), previewDownloadService_)
     , contentProvider_(contentProvider ? std::move(contentProvider) : std::make_shared<dawn::core::ModrinthProvider>()) {
     refresh();
+    refreshSettingsState();
 }
 
 QVariantList AppViewModel::instanceCards() const {
@@ -209,6 +213,34 @@ QString AppViewModel::installPreviewStatus() const {
 
 QString AppViewModel::repairExecutionStatus() const {
     return repairExecutionStatus_;
+}
+
+bool AppViewModel::firstLaunchCompleted() const {
+    return settings_.firstLaunchCompleted;
+}
+
+bool AppViewModel::firstLaunchVisible() const {
+    return !settings_.firstLaunchCompleted;
+}
+
+QString AppViewModel::uiMode() const {
+    return to_qstring(std::string(dawn::core::to_string(settings_.uiMode)));
+}
+
+int AppViewModel::lowDiskThresholdGb() const {
+    return settings_.lowDiskThresholdGb;
+}
+
+QString AppViewModel::lowDiskWarning() const {
+    return diskSpaceStatus_.low ? to_qstring(diskSpaceStatus_.message) : QString();
+}
+
+QVariantMap AppViewModel::diskSpaceStatus() const {
+    return diskStatusToVariant(diskSpaceStatus_);
+}
+
+QVariantMap AppViewModel::cacheCleanupSummary() const {
+    return cacheCleanupToVariant(cacheCleanupSummary_);
 }
 
 QString AppViewModel::selectedContentProjectId() const {
@@ -461,6 +493,49 @@ bool AppViewModel::executeRepairPlan(int planIndex) {
     return result.success;
 }
 
+bool AppViewModel::completeFirstLaunch() {
+    if (settings_.firstLaunchCompleted) {
+        return false;
+    }
+
+    settings_.firstLaunchCompleted = true;
+    persistSettings();
+    return true;
+}
+
+void AppViewModel::setUiMode(const QString& mode) {
+    const auto requested = to_std(mode);
+    const auto newMode = requested == "advanced" ? dawn::core::UiMode::Advanced : dawn::core::UiMode::Novice;
+    if (settings_.uiMode == newMode) {
+        return;
+    }
+
+    settings_.uiMode = newMode;
+    persistSettings();
+}
+
+void AppViewModel::setLowDiskThresholdGb(int thresholdGb) {
+    const auto clamped = std::max(0, thresholdGb);
+    if (settings_.lowDiskThresholdGb == clamped) {
+        return;
+    }
+
+    settings_.lowDiskThresholdGb = clamped;
+    persistSettings();
+}
+
+bool AppViewModel::clearCache() {
+    std::string error;
+    const auto cachePath = settings_.cachePath.empty() ? settingsService_.defaults().cachePath : settings_.cachePath;
+    cacheCleanupSummary_ = settingsService_.clean_cache(cachePath, &error);
+    if (!cacheCleanupSummary_.success && !error.empty()) {
+        cacheCleanupSummary_.message = error;
+    }
+    refreshDiskStatus();
+    emit dataChanged();
+    return cacheCleanupSummary_.success;
+}
+
 void AppViewModel::updateSelectedContentPreview() {
     refreshInstallPreview();
 }
@@ -488,6 +563,31 @@ void AppViewModel::refreshSelectedContentVersions() {
 
 void AppViewModel::populateSearchResults(const dawn::core::SearchResult& result) {
     contentSearchResults_ = result.items;
+}
+
+void AppViewModel::refreshSettingsState() {
+    if (settings_.cachePath.empty()) {
+        settings_.cachePath = settingsService_.defaults().cachePath;
+    }
+    refreshDiskStatus();
+}
+
+void AppViewModel::persistSettings() {
+    std::string error;
+    if (settings_.cachePath.empty()) {
+        settings_.cachePath = settingsService_.defaults().cachePath;
+    }
+    settingsService_.save(settings_, &error);
+    refreshSettingsState();
+    emit dataChanged();
+}
+
+void AppViewModel::refreshDiskStatus() {
+    std::string error;
+    diskSpaceStatus_ = dawn::core::SettingsService::check_low_disk_space(std::filesystem::path(dataRoot_.toStdString()), settings_.lowDiskThresholdGb, &error);
+    if (!error.empty() && diskSpaceStatus_.message.empty()) {
+        diskSpaceStatus_.message = error;
+    }
 }
 
 std::optional<dawn::core::InstallRequest> AppViewModel::currentInstallRequest() const {
@@ -556,6 +656,7 @@ void AppViewModel::refresh() {
         activeInstanceTabId_ = QStringLiteral("overview");
     }
     refreshInstallPreview();
+    refreshDiskStatus();
     emit dataChanged();
 }
 
@@ -721,6 +822,33 @@ QVariantMap AppViewModel::rollbackEventToVariant(const dawn::core::ContentInstal
         {"target", to_qstring(event.target)},
         {"status", to_qstring(event.status)},
         {"message", to_qstring(event.message)},
+    };
+}
+
+QVariantMap AppViewModel::diskStatusToVariant(const dawn::core::DiskSpaceCheckResult& result) const {
+    return QVariantMap{
+        {"low", result.low},
+        {"path", to_qstring(result.path.generic_string())},
+        {"availableBytes", QVariant::fromValue<qulonglong>(static_cast<qulonglong>(result.availableBytes))},
+        {"thresholdBytes", QVariant::fromValue<qulonglong>(static_cast<qulonglong>(result.thresholdBytes))},
+        {"message", to_qstring(result.message)},
+    };
+}
+
+QVariantMap AppViewModel::cacheCleanupToVariant(const dawn::core::CacheCleanupResult& result) const {
+    QVariantList logs;
+    for (const auto& log : result.logs) {
+        logs.push_back(to_qstring(log));
+    }
+
+    return QVariantMap{
+        {"success", result.success},
+        {"path", to_qstring(result.cachePath.generic_string())},
+        {"bytesFreed", QVariant::fromValue<qulonglong>(static_cast<qulonglong>(result.bytesFreed))},
+        {"filesRemoved", QVariant::fromValue<qulonglong>(static_cast<qulonglong>(result.filesRemoved))},
+        {"directoriesRemoved", QVariant::fromValue<qulonglong>(static_cast<qulonglong>(result.directoriesRemoved))},
+        {"message", to_qstring(result.message)},
+        {"logs", logs},
     };
 }
 

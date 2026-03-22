@@ -3,6 +3,8 @@
 #include "dawn/infra/fs/file_system.h"
 #include "dawn/infra/json/simple_json.h"
 
+#include <algorithm>
+#include <limits>
 #include <utility>
 
 namespace dawn::core {
@@ -41,6 +43,14 @@ std::string to_string(BackupStrategy strategy) {
     return "before-update";
 }
 
+std::string to_string(UiMode mode) {
+    switch (mode) {
+    case UiMode::Novice: return "novice";
+    case UiMode::Advanced: return "advanced";
+    }
+    return "novice";
+}
+
 JavaStrategy java_strategy_from_string(const std::string& text) {
     if (text == "bundled") return JavaStrategy::Bundled;
     if (text == "custom-path") return JavaStrategy::CustomPath;
@@ -60,6 +70,25 @@ BackupStrategy backup_strategy_from_string(const std::string& text) {
     if (text == "before-launch") return BackupStrategy::BeforeLaunch;
     if (text == "scheduled") return BackupStrategy::Scheduled;
     return BackupStrategy::BeforeUpdate;
+}
+
+UiMode ui_mode_from_string(const std::string& text) {
+    if (text == "advanced") return UiMode::Advanced;
+    return UiMode::Novice;
+}
+
+std::uintmax_t clamp_threshold_bytes(int thresholdGb) {
+    if (thresholdGb <= 0) {
+        return 0;
+    }
+
+    constexpr std::uintmax_t kGb = 1024ull * 1024ull * 1024ull;
+    const auto maxValue = std::numeric_limits<std::uintmax_t>::max();
+    const auto threshold = static_cast<std::uintmax_t>(thresholdGb);
+    if (threshold > maxValue / kGb) {
+        return maxValue;
+    }
+    return threshold * kGb;
 }
 
 Value global_settings_to_json(const GlobalSettings& settings) {
@@ -86,6 +115,9 @@ Value global_settings_to_json(const GlobalSettings& settings) {
     object.emplace("minMemoryMb", Value(settings.minMemoryMb));
     object.emplace("maxMemoryMb", Value(settings.maxMemoryMb));
     object.emplace("backupStrategy", Value(to_string(settings.backupStrategy)));
+    object.emplace("firstLaunchCompleted", Value(settings.firstLaunchCompleted));
+    object.emplace("uiMode", Value(std::string(dawn::core::to_string(settings.uiMode))));
+    object.emplace("lowDiskThresholdGb", Value(settings.lowDiskThresholdGb));
     object.emplace("proxy", Value(std::move(proxy)));
     object.emplace("experimentalMode", Value(settings.experimentalMode));
     object.emplace("experimentalFlags", Value(std::move(flags)));
@@ -110,6 +142,9 @@ bool global_settings_from_json(const Value& value, GlobalSettings* settings, std
     const auto* min_memory = dawn::infra::json::find(object, "minMemoryMb");
     const auto* max_memory = dawn::infra::json::find(object, "maxMemoryMb");
     const auto* backup_strategy = dawn::infra::json::find(object, "backupStrategy");
+    const auto* first_launch_completed = dawn::infra::json::find(object, "firstLaunchCompleted");
+    const auto* ui_mode = dawn::infra::json::find(object, "uiMode");
+    const auto* low_disk_threshold_gb = dawn::infra::json::find(object, "lowDiskThresholdGb");
     const auto* proxy = dawn::infra::json::find(object, "proxy");
     const auto* experimental_mode = dawn::infra::json::find(object, "experimentalMode");
     const auto* experimental_flags = dawn::infra::json::find(object, "experimentalFlags");
@@ -134,6 +169,9 @@ bool global_settings_from_json(const Value& value, GlobalSettings* settings, std
     settings->minMemoryMb = static_cast<int>(min_memory->as_number());
     settings->maxMemoryMb = static_cast<int>(max_memory->as_number());
     settings->backupStrategy = backup_strategy_from_string(backup_strategy->as_string());
+    settings->firstLaunchCompleted = first_launch_completed && first_launch_completed->is_bool() ? first_launch_completed->as_bool() : false;
+    settings->uiMode = ui_mode && ui_mode->is_string() ? ui_mode_from_string(ui_mode->as_string()) : UiMode::Novice;
+    settings->lowDiskThresholdGb = low_disk_threshold_gb && low_disk_threshold_gb->is_number() ? static_cast<int>(low_disk_threshold_gb->as_number()) : 20;
 
     settings->proxy = ProxySettings{};
     if (proxy && proxy->is_object()) {
@@ -212,8 +250,162 @@ GlobalSettings SettingsService::defaults() const {
     settings.minMemoryMb = 2048;
     settings.maxMemoryMb = 4096;
     settings.backupStrategy = BackupStrategy::BeforeUpdate;
+    settings.firstLaunchCompleted = false;
+    settings.uiMode = UiMode::Novice;
+    settings.lowDiskThresholdGb = 20;
     settings.experimentalMode = false;
     return settings;
+}
+
+CacheCleanupResult SettingsService::clean_cache(const std::filesystem::path& cachePath, std::string* error) const {
+    CacheCleanupResult result;
+    result.cachePath = cachePath;
+
+    if (cachePath.empty()) {
+        result.success = true;
+        result.message = "cache path is empty";
+        if (error) {
+            error->clear();
+        }
+        return result;
+    }
+
+    std::error_code ec;
+    if (!std::filesystem::exists(cachePath, ec)) {
+        result.success = true;
+        result.message = "cache directory does not exist";
+        if (error) {
+            error->clear();
+        }
+        return result;
+    }
+
+    if (!std::filesystem::is_directory(cachePath, ec)) {
+        const auto bytesFreed = dawn::infra::fs::file_size(cachePath, &result.message);
+        if (!result.message.empty()) {
+            if (error) {
+                *error = result.message;
+            }
+            return result;
+        }
+        if (!std::filesystem::remove(cachePath, ec)) {
+            result.message = ec ? ec.message() : "failed to remove cache file";
+            if (error) {
+                *error = result.message;
+            }
+            return result;
+        }
+        result.success = true;
+        result.filesRemoved = 1;
+        result.bytesFreed = bytesFreed;
+        result.message = "removed cache file";
+        if (error) {
+            error->clear();
+        }
+        return result;
+    }
+
+    std::vector<std::filesystem::path> children;
+    for (const auto& entry : std::filesystem::directory_iterator(cachePath, ec)) {
+        if (ec) {
+            break;
+        }
+        children.push_back(entry.path());
+    }
+    if (ec) {
+        result.message = ec.message();
+        if (error) {
+            *error = result.message;
+        }
+        return result;
+    }
+
+    for (const auto& child : children) {
+        std::uintmax_t childBytes = 0;
+        std::size_t childFiles = 0;
+        std::size_t childDirs = 0;
+        bool childIsDirectory = false;
+
+        std::error_code walkEc;
+        if (std::filesystem::is_regular_file(child, walkEc)) {
+            childBytes = dawn::infra::fs::file_size(child, &result.message);
+            if (!result.message.empty()) {
+                result.logs.push_back("scan failed for " + child.generic_string() + ": " + result.message);
+                result.message.clear();
+            }
+            ++childFiles;
+        } else if (std::filesystem::is_directory(child, walkEc)) {
+            childIsDirectory = true;
+            for (const auto& descendant : std::filesystem::recursive_directory_iterator(child, walkEc)) {
+                if (walkEc) {
+                    break;
+                }
+                if (descendant.is_regular_file()) {
+                    childBytes += dawn::infra::fs::file_size(descendant.path(), nullptr);
+                    ++childFiles;
+                } else if (descendant.is_directory()) {
+                    ++childDirs;
+                }
+            }
+        }
+
+        const auto removed = std::filesystem::remove_all(child, ec);
+        if (ec) {
+            result.message = ec.message();
+            if (error) {
+                *error = result.message;
+            }
+            return result;
+        }
+
+        result.bytesFreed += childBytes;
+        result.filesRemoved += childFiles;
+        result.directoriesRemoved += childDirs + (childIsDirectory && removed > 0 ? 1 : 0);
+        result.logs.push_back("removed " + child.generic_string());
+    }
+
+    result.success = true;
+    result.message = "cache cleaned";
+    if (error) {
+        error->clear();
+    }
+    return result;
+}
+
+DiskSpaceCheckResult SettingsService::check_low_disk_space(const std::filesystem::path& path, int thresholdGb, std::string* error) {
+    DiskSpaceCheckResult result;
+    result.path = path;
+    result.thresholdBytes = clamp_threshold_bytes(thresholdGb);
+
+    std::filesystem::path probe = path;
+    std::error_code ec;
+    if (probe.empty() || !std::filesystem::exists(probe, ec)) {
+        probe = probe.parent_path();
+        if (probe.empty()) {
+            probe = std::filesystem::current_path();
+        }
+    }
+
+    const auto space = std::filesystem::space(probe, ec);
+    if (ec) {
+        result.message = ec.message();
+        if (error) {
+            *error = result.message;
+        }
+        return result;
+    }
+
+    result.availableBytes = space.available;
+    result.low = result.thresholdBytes > 0 && result.availableBytes < result.thresholdBytes;
+    const auto availableGb = static_cast<double>(result.availableBytes) / (1024.0 * 1024.0 * 1024.0);
+    const auto thresholdGbValue = static_cast<double>(thresholdGb < 0 ? 0 : thresholdGb);
+    result.message = result.low
+        ? "low disk space: available " + std::to_string(static_cast<int>(availableGb)) + " GB below threshold " + std::to_string(static_cast<int>(thresholdGbValue)) + " GB"
+        : "disk space is sufficient";
+    if (error) {
+        error->clear();
+    }
+    return result;
 }
 
 } // namespace dawn::core

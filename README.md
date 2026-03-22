@@ -70,7 +70,7 @@ The code is layered so that the core library can be tested without Qt.
 | Area | Status | Notes |
 | --- | --- | --- |
 | Core instance storage | implemented | JSON-backed instance manifests and workbench model are wired in. |
-| Settings | implemented | Global settings model and JSON persistence are available. |
+| Settings | implemented | Global settings model, first-launch state, novice/advanced mode, low-disk threshold, cache maintenance, and JSON persistence are available. |
 | Integrity hashing | implemented | SHA-256 hashing is real and used by download verification. |
 | Accounts | protocol-adapter | Microsoft and offline caches exist; OAuth plus Xbox Live, XSTS, and Minecraft profile protocol layers are wired, transport defaults to fake on non-Windows. |
 | Java | scaffolded | Runtime discovery and profile stubs are present. |

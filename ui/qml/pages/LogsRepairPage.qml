@@ -44,6 +44,22 @@ Item {
 
             DawnCard {
                 Layout.fillWidth: true
+                Layout.preferredHeight: 120
+                visible: appViewModel.lowDiskWarning.length > 0
+                title: "Low Disk Warning"
+                subtitle: "The current data root has limited free space."
+
+                Text {
+                    anchors.fill: parent
+                    text: appViewModel.lowDiskWarning
+                    color: "#f2c5ba"
+                    font.pixelSize: 13
+                    wrapMode: Text.WordWrap
+                }
+            }
+
+            DawnCard {
+                Layout.fillWidth: true
                 Layout.preferredHeight: 180
                 title: "Install Preview"
                 subtitle: appViewModel.installPreviewStatus

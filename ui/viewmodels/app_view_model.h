@@ -10,6 +10,7 @@
 #include "dawn/core/service/task_queue.h"
 #include "dawn/core/download/download_service.h"
 #include "dawn/core/provider/modrinth_provider.h"
+#include "dawn/core/settings/settings_service.h"
 #include "dawn/infra/net/http_client.h"
 
 #include <QObject>
@@ -40,6 +41,13 @@ class AppViewModel final : public QObject {
     Q_PROPERTY(QVariantList repairExecutionLogs READ repairExecutionLogs NOTIFY dataChanged)
     Q_PROPERTY(QString installPreviewStatus READ installPreviewStatus NOTIFY dataChanged)
     Q_PROPERTY(QString repairExecutionStatus READ repairExecutionStatus NOTIFY dataChanged)
+    Q_PROPERTY(bool firstLaunchCompleted READ firstLaunchCompleted NOTIFY dataChanged)
+    Q_PROPERTY(bool firstLaunchVisible READ firstLaunchVisible NOTIFY dataChanged)
+    Q_PROPERTY(QString uiMode READ uiMode WRITE setUiMode NOTIFY dataChanged)
+    Q_PROPERTY(int lowDiskThresholdGb READ lowDiskThresholdGb WRITE setLowDiskThresholdGb NOTIFY dataChanged)
+    Q_PROPERTY(QString lowDiskWarning READ lowDiskWarning NOTIFY dataChanged)
+    Q_PROPERTY(QVariantMap diskSpaceStatus READ diskSpaceStatus NOTIFY dataChanged)
+    Q_PROPERTY(QVariantMap cacheCleanupSummary READ cacheCleanupSummary NOTIFY dataChanged)
     Q_PROPERTY(QString selectedContentProjectId READ selectedContentProjectId NOTIFY dataChanged)
     Q_PROPERTY(QString selectedContentVersionId READ selectedContentVersionId NOTIFY dataChanged)
     Q_PROPERTY(QString selectedTargetInstanceId READ selectedTargetInstanceId NOTIFY dataChanged)
@@ -68,6 +76,13 @@ public:
     [[nodiscard]] QVariantList repairExecutionLogs() const;
     [[nodiscard]] QString installPreviewStatus() const;
     [[nodiscard]] QString repairExecutionStatus() const;
+    [[nodiscard]] bool firstLaunchCompleted() const;
+    [[nodiscard]] bool firstLaunchVisible() const;
+    [[nodiscard]] QString uiMode() const;
+    [[nodiscard]] int lowDiskThresholdGb() const;
+    [[nodiscard]] QString lowDiskWarning() const;
+    [[nodiscard]] QVariantMap diskSpaceStatus() const;
+    [[nodiscard]] QVariantMap cacheCleanupSummary() const;
     [[nodiscard]] QString selectedContentProjectId() const;
     [[nodiscard]] QString selectedContentVersionId() const;
     [[nodiscard]] QString selectedTargetInstanceId() const;
@@ -88,6 +103,10 @@ public:
     Q_INVOKABLE bool executeRepairPlan();
     Q_INVOKABLE bool executeRepairPlan(const QString& planId);
     Q_INVOKABLE bool executeRepairPlan(int planIndex);
+    Q_INVOKABLE bool completeFirstLaunch();
+    Q_INVOKABLE void setUiMode(const QString& mode);
+    Q_INVOKABLE void setLowDiskThresholdGb(int thresholdGb);
+    Q_INVOKABLE bool clearCache();
     Q_INVOKABLE QVariantMap preflightFor(const QString& instanceId) const;
     Q_INVOKABLE void setActiveInstance(const QString& instanceId);
     Q_INVOKABLE void setActiveInstanceTab(const QString& tabId);
@@ -109,14 +128,23 @@ private:
     [[nodiscard]] QVariantMap repairPlanToVariant(const dawn::core::TaskPlan& plan, bool available) const;
     [[nodiscard]] QVariantMap diagnosticToVariant(const dawn::core::InstallDiagnostic& diagnostic) const;
     [[nodiscard]] QVariantMap rollbackEventToVariant(const dawn::core::ContentInstallResult::RollbackEvent& event) const;
+    [[nodiscard]] QVariantMap diskStatusToVariant(const dawn::core::DiskSpaceCheckResult& result) const;
+    [[nodiscard]] QVariantMap cacheCleanupToVariant(const dawn::core::CacheCleanupResult& result) const;
     [[nodiscard]] std::size_t resourceCount(const dawn::core::InstanceManifest& manifest) const;
     [[nodiscard]] std::size_t activeInstanceIndex() const;
     [[nodiscard]] std::optional<dawn::core::InstallRequest> currentInstallRequest() const;
+    void refreshSettingsState();
+    void persistSettings();
+    void refreshDiskStatus();
     void updateSelectedContentPreview();
     void refreshSelectedContentVersions();
     void populateSearchResults(const dawn::core::SearchResult& result);
 
     QString dataRoot_;
+    dawn::core::SettingsService settingsService_;
+    dawn::core::GlobalSettings settings_;
+    dawn::core::DiskSpaceCheckResult diskSpaceStatus_;
+    dawn::core::CacheCleanupResult cacheCleanupSummary_;
     dawn::core::InstanceService instanceService_;
     dawn::core::PreflightService preflightService_;
     dawn::core::TaskQueue taskQueue_;

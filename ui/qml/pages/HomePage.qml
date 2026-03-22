@@ -63,6 +63,43 @@ Item {
                 }
             }
 
+            DawnCard {
+                Layout.fillWidth: true
+                Layout.preferredHeight: 132
+                visible: appViewModel.firstLaunchVisible
+                title: "First Launch Wizard"
+                subtitle: "Complete the initial setup to hide this card."
+
+                RowLayout {
+                    anchors.fill: parent
+                    spacing: 16
+
+                    Column {
+                        Layout.fillWidth: true
+                        spacing: 6
+
+                        Text {
+                            text: "Dawn is still in its initial setup flow."
+                            color: "#f5f8fb"
+                            font.pixelSize: 16
+                            font.bold: true
+                        }
+
+                        Text {
+                            text: "Finish the wizard once you have verified the default data root and launcher settings."
+                            color: "#c5d0df"
+                            font.pixelSize: 12
+                            wrapMode: Text.WordWrap
+                        }
+                    }
+
+                    Button {
+                        text: "Complete First Launch"
+                        onClicked: appViewModel.completeFirstLaunch()
+                    }
+                }
+            }
+
             RowLayout {
                 Layout.fillWidth: true
                 spacing: 16
@@ -90,6 +127,33 @@ Item {
                     title: "Preflight"
                     value: appViewModel.primaryPreflight.ready ? "Ready" : "Check"
                     hint: appViewModel.primaryPreflight.ready ? "No blocking issues were detected." : "Open diagnostics to inspect warnings or errors."
+                }
+            }
+
+            DawnCard {
+                Layout.fillWidth: true
+                Layout.preferredHeight: 132
+                visible: appViewModel.lowDiskWarning.length > 0
+                title: "Low Disk Warning"
+                subtitle: "The current data root needs attention."
+
+                Column {
+                    anchors.fill: parent
+                    spacing: 8
+
+                    Text {
+                        text: appViewModel.lowDiskWarning
+                        color: "#f2c5ba"
+                        font.pixelSize: 14
+                        wrapMode: Text.WordWrap
+                    }
+
+                    Text {
+                        text: "Probe path: " + appViewModel.diskSpaceStatus.path
+                        color: "#c5d0df"
+                        font.pixelSize: 12
+                        wrapMode: Text.WordWrap
+                    }
                 }
             }
 
