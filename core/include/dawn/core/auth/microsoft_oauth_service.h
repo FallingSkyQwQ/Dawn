@@ -1,5 +1,6 @@
 #pragma once
 
+#include "dawn/infra/net/http_client_factory.h"
 #include "dawn/infra/net/http_client.h"
 
 #include <memory>
@@ -44,6 +45,7 @@ class MicrosoftOAuthService {
 public:
     explicit MicrosoftOAuthService(std::shared_ptr<dawn::infra::net::HttpClient> client = {});
 
+    [[nodiscard]] const std::shared_ptr<dawn::infra::net::HttpClient>& http_client() const noexcept;
     DeviceCodeResponse start_device_code_flow(const DeviceCodeRequest& request, std::string* error = nullptr) const;
     TokenResponse poll_token(const DeviceCodeRequest& request, const std::string& deviceCode, std::string* error = nullptr) const;
     TokenResponse refresh_token(const DeviceCodeRequest& request, const std::string& refreshToken, std::string* error = nullptr) const;

@@ -1,5 +1,6 @@
 #include "dawn/core/provider/modrinth_provider.h"
 
+#include "dawn/infra/net/http_client_factory.h"
 #include "dawn/infra/json/simple_json.h"
 
 #include <cstddef>
@@ -327,7 +328,11 @@ HttpRequest make_get_request(const std::string& url) {
 } // namespace
 
 ModrinthProvider::ModrinthProvider(std::shared_ptr<dawn::infra::net::HttpClient> client)
-    : client_(client ? std::move(client) : std::make_shared<dawn::infra::net::FakeHttpClient>()) {}
+    : client_(client ? std::move(client) : dawn::infra::net::HttpClientFactory::create_default_http_client()) {}
+
+const std::shared_ptr<dawn::infra::net::HttpClient>& ModrinthProvider::http_client() const noexcept {
+    return client_;
+}
 
 std::string ModrinthProvider::build_search_facets(const SearchQuery& query) {
     return facets_to_query_value(query);

@@ -1,6 +1,7 @@
 #pragma once
 
 #include "dawn/core/interfaces/content_provider.h"
+#include "dawn/infra/net/http_client_factory.h"
 #include "dawn/infra/net/http_client.h"
 
 #include <memory>
@@ -19,6 +20,7 @@ class ModrinthProvider final : public IContentProvider {
 public:
     explicit ModrinthProvider(std::shared_ptr<dawn::infra::net::HttpClient> client = {});
 
+    [[nodiscard]] const std::shared_ptr<dawn::infra::net::HttpClient>& http_client() const noexcept;
     SearchResult search(const SearchQuery& query) override;
     std::vector<ContentVersion> versions(const std::string& projectId) override;
     std::vector<ContentVersion> versions(const std::string& projectId, const ModrinthVersionQuery& query);

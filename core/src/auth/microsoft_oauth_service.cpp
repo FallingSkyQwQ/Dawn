@@ -1,5 +1,6 @@
 #include "dawn/core/auth/microsoft_oauth_service.h"
 
+#include "dawn/infra/net/http_client_factory.h"
 #include "dawn/infra/json/simple_json.h"
 
 #include <cstddef>
@@ -81,7 +82,11 @@ HttpRequest make_request(dawn::infra::net::HttpMethod method, const std::string&
 } // namespace
 
 MicrosoftOAuthService::MicrosoftOAuthService(std::shared_ptr<dawn::infra::net::HttpClient> client)
-    : client_(client ? std::move(client) : std::make_shared<dawn::infra::net::FakeHttpClient>()) {}
+    : client_(client ? std::move(client) : dawn::infra::net::HttpClientFactory::create_default_http_client()) {}
+
+const std::shared_ptr<dawn::infra::net::HttpClient>& MicrosoftOAuthService::http_client() const noexcept {
+    return client_;
+}
 
 std::string MicrosoftOAuthService::tenant(const DeviceCodeRequest& request) const {
     return request.tenant.empty() ? std::string("common") : request.tenant;

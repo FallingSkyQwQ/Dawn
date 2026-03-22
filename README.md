@@ -78,12 +78,13 @@ The code is layered so that the core library can be tested without Qt.
 | Download queue | scaffolded | Task queue and update simulation are present, not network-backed. |
 | Diagnostics | scaffolded | Log rule matching returns human-readable categories. |
 | Backups | scaffolded | Snapshot metadata and restore plans are local stubs. |
-| Modrinth integration | protocol-adapter | Search/version URL builders and JSON parsing are wired; transport defaults to fake. |
-| Microsoft auth | protocol-adapter | Device-code and token payloads are wired; transport defaults to fake. |
+| Modrinth integration | protocol-adapter | Search/version URL builders and JSON parsing are wired; Windows uses WinHTTP, other platforms use fake transport. |
+| Microsoft auth | protocol-adapter | Device-code and token payloads are wired; Windows uses WinHTTP, other platforms use fake transport. |
+| HTTP transport | partial | `WinHttpClient` is available on Windows; the default factory falls back to `FakeHttpClient` elsewhere. |
 | FluentUIbi | planned | The shell is compatible with the submodule but does not depend on it. |
 
 ## Known Gaps
 
-* Network transport is fake by default; a concrete HTTP backend is still pending.
+* Windows has a real WinHTTP transport; other platforms fall back to fake transport by default.
 * Real Minecraft runtime orchestration and actual file download pipelines are intentionally stubbed.
 * FluentUIbi integration is behind a CMake switch and falls back when the submodule is not present.

@@ -10,6 +10,7 @@ if(GTest_FOUND)
             diagnostics_service_test.cpp
             global_settings_test.cpp
             instance_manifest_test.cpp
+            http_client_factory_test.cpp
             microsoft_oauth_service_test.cpp
             modrinth_provider_protocol_test.cpp
             preflight_test.cpp
