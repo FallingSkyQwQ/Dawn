@@ -1,11 +1,15 @@
 import QtQuick
 import QtQuick.Controls
 import QtQuick.Layouts
+import FluentUI 1.0
 import "../components"
 
 Item {
     id: root
     property var appViewModel
+    property string lastShownAutoCreatedInstanceId: ""
+    property string pendingDeletePath: ""
+    property string pendingDeleteAssetType: ""
 
     function tabIndex(tabId) {
         var tabs = appViewModel.activeInstanceWorkbench.tabs || []
@@ -15,6 +19,258 @@ Item {
             }
         }
         return 0
+    }
+
+    function instanceTableRows() {
+        var rows = []
+        var data = appViewModel ? appViewModel.instanceCards : []
+        for (var i = 0; i < data.length; ++i) {
+            var item = data[i]
+            rows.push({
+                "_key": item.id || ("instance-" + i),
+                "id": item.id || "",
+                "name": item.name || "",
+                "mcVersion": item.mcVersion || "",
+                "loader": item.loader || "",
+                "health": item.health || "",
+                "resourceCount": item.resourceCount || 0,
+                "javaProfileId": item.javaProfileId || "",
+                "selected": item.selected ? "yes" : "",
+                "openAction": instanceTable.customItem(comOpenInstanceAction, { "instanceId": item.id || "" })
+            })
+        }
+        return rows
+    }
+
+    function activePreflight() {
+        if (!appViewModel || appViewModel.activeInstanceId.length === 0) {
+            return { "ready": false, "issues": [] }
+        }
+        return appViewModel.preflightFor(appViewModel.activeInstanceId)
+    }
+
+    function assetList(assetKey) {
+        if (!appViewModel || !appViewModel.activeInstanceAssets) {
+            return []
+        }
+        var data = appViewModel.activeInstanceAssets[assetKey]
+        return data ? data : []
+    }
+
+    function workbenchAssetKey(tabId) {
+        switch (tabId) {
+        case "mods": return "mods"
+        case "resourcepacks": return "resourcepacks"
+        case "shaderpacks": return "shaderpacks"
+        case "worlds": return "worlds"
+        case "logs": return "logs"
+        default: return ""
+        }
+    }
+
+    function workbenchRows(tabId, tableRef) {
+        var key = workbenchAssetKey(tabId)
+        if (key.length === 0) {
+            return []
+        }
+        var src = assetList(key)
+        var rows = []
+        for (var i = 0; i < src.length; ++i) {
+            var item = src[i]
+            if (tabId === "worlds") {
+                rows.push({
+                    "_key": item.path || ("world-" + i),
+                    "name": item.name || "",
+                    "path": item.path || "",
+                    "openAction": tableRef.customItem(comOpenAssetAction, { "path": item.path || "" }),
+                    "deleteAction": tableRef.customItem(comDeleteAssetAction, { "path": item.path || "", "assetType": tabId })
+                })
+            } else {
+                var enabled = item.enabled === undefined ? true : !!item.enabled
+                var canToggle = tabId === "mods" || tabId === "resourcepacks" || tabId === "shaderpacks"
+                rows.push({
+                    "_key": item.path || ("asset-" + i),
+                    "name": item.name || "",
+                    "status": item.status || (enabled ? "Enabled" : "Disabled"),
+                    "sizeDisplay": item.sizeDisplay || "",
+                    "path": item.path || "",
+                    "toggleAction": canToggle
+                        ? tableRef.customItem(comToggleAssetAction, {
+                            "assetType": tabId,
+                            "path": item.path || "",
+                            "enabled": enabled
+                        })
+                        : "",
+                    "openAction": tableRef.customItem(comOpenAssetAction, { "path": item.path || "" }),
+                    "deleteAction": tableRef.customItem(comDeleteAssetAction, { "path": item.path || "", "assetType": tabId })
+                })
+            }
+        }
+        return rows
+    }
+
+    function workbenchColumns(tabId) {
+        if (tabId === "worlds") {
+            return [
+                { "title": "World", "dataIndex": "name", "width": 240 },
+                { "title": "Path", "dataIndex": "path", "width": 420 },
+                { "title": "Open", "dataIndex": "openAction", "width": 80 },
+                { "title": "Delete", "dataIndex": "deleteAction", "width": 80 }
+            ]
+        }
+        if (tabId === "mods" || tabId === "resourcepacks" || tabId === "shaderpacks") {
+            return [
+                { "title": "Name", "dataIndex": "name", "width": 200 },
+                { "title": "State", "dataIndex": "status", "width": 90 },
+                { "title": "Size", "dataIndex": "sizeDisplay", "width": 100 },
+                { "title": "Path", "dataIndex": "path", "width": 260 },
+                { "title": "Toggle", "dataIndex": "toggleAction", "width": 80 },
+                { "title": "Open", "dataIndex": "openAction", "width": 80 },
+                { "title": "Delete", "dataIndex": "deleteAction", "width": 80 }
+            ]
+        }
+        if (tabId === "logs") {
+            return [
+                { "title": "Name", "dataIndex": "name", "width": 220 },
+                { "title": "Size", "dataIndex": "sizeDisplay", "width": 100 },
+                { "title": "Path", "dataIndex": "path", "width": 300 },
+                { "title": "Open", "dataIndex": "openAction", "width": 80 },
+                { "title": "Delete", "dataIndex": "deleteAction", "width": 80 }
+            ]
+        }
+        return []
+    }
+
+    function isTogglableTab(tabId) {
+        return tabId === "mods" || tabId === "resourcepacks" || tabId === "shaderpacks"
+    }
+
+    function isRemovableTab(tabId) {
+        return isTogglableTab(tabId) || tabId === "logs" || tabId === "worlds"
+    }
+
+    FluContentDialog {
+        id: deleteAssetDialog
+        title: "Delete Asset"
+        message: "Remove selected asset from instance storage?"
+        buttonFlags: FluContentDialogType.NegativeButton | FluContentDialogType.PositiveButton
+        negativeText: "Cancel"
+        positiveText: "Delete"
+        onPositiveClicked: {
+            if (root.pendingDeletePath.length === 0) {
+                return
+            }
+            var ok = root.appViewModel.removeAsset(root.pendingDeletePath)
+            var win = root.Window.window
+            if (win && win.showSuccess && win.showError) {
+                if (ok) {
+                    win.showSuccess("Asset removed", 2200, root.pendingDeletePath)
+                } else {
+                    win.showError("Asset removal failed", 2800, root.pendingDeletePath)
+                }
+            }
+            root.pendingDeletePath = ""
+            root.pendingDeleteAssetType = ""
+        }
+    }
+
+    function workbenchItemCount(tabId) {
+        var key = workbenchAssetKey(tabId)
+        if (key.length === 0) {
+            return 0
+        }
+        return assetList(key).length
+    }
+
+    Component {
+        id: comToggleAssetAction
+        Item {
+            FluButton {
+                anchors.centerIn: parent
+                text: (options && options.enabled) ? "Disable" : "Enable"
+                onClicked: {
+                    if (!options || !options.path) {
+                        return
+                    }
+                    var ok = root.appViewModel.toggleAssetEnabled(options.assetType || "", options.path, !(options.enabled === true))
+                    var win = root.Window.window
+                    if (win && win.showSuccess && win.showError) {
+                        if (ok) {
+                            win.showSuccess("Asset state updated", 2200, options.path)
+                        } else {
+                            win.showError("Asset state update failed", 2800, options.path)
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    Component {
+        id: comOpenAssetAction
+        Item {
+            FluButton {
+                anchors.centerIn: parent
+                text: "Open"
+                onClicked: {
+                    if (!options || !options.path) {
+                        return
+                    }
+                    var ok = root.appViewModel.openPath(options.path)
+                    if (!ok) {
+                        var win = root.Window.window
+                        if (win && win.showError) {
+                            win.showError("Open path failed", 2400, options.path)
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    Component {
+        id: comDeleteAssetAction
+        Item {
+            FluButton {
+                anchors.centerIn: parent
+                text: "Delete"
+                onClicked: {
+                    if (!options || !options.path) {
+                        return
+                    }
+                    root.pendingDeletePath = options.path
+                    root.pendingDeleteAssetType = options.assetType || ""
+                    deleteAssetDialog.open()
+                }
+            }
+        }
+    }
+
+    function showAutoCreatedInstanceInfoBar() {
+        if (!root.appViewModel || !root.appViewModel.autoCreatedInstanceNoticeVisible) {
+            return
+        }
+        var instanceId = root.appViewModel.autoCreatedInstanceId || ""
+        if (instanceId.length === 0 || instanceId === root.lastShownAutoCreatedInstanceId) {
+            return
+        }
+        var win = root.Window.window
+        if (win && win.showSuccess) {
+            win.showSuccess(root.appViewModel.autoCreatedInstanceNoticeText, 3600, "Open the instance workbench from this page.")
+        }
+        root.lastShownAutoCreatedInstanceId = instanceId
+        root.appViewModel.clearAutoCreatedInstanceNotice()
+    }
+
+    Connections {
+        target: root.appViewModel
+        function onDataChanged() {
+            root.showAutoCreatedInstanceInfoBar()
+        }
+    }
+
+    Component.onCompleted: {
+        root.showAutoCreatedInstanceInfoBar()
     }
 
     Flickable {
@@ -38,17 +294,17 @@ Item {
                     anchors.fill: parent
                     spacing: 12
 
-                    Button {
+                    FluFilledButton {
                         text: "Create Vanilla Instance"
                         onClicked: appViewModel.createInstance("Dawn Vanilla", "1.20.1", "none")
                     }
 
-                    Button {
+                    FluFilledButton {
                         text: "Create Fabric Instance"
                         onClicked: appViewModel.createInstance("Dawn Fabric", "1.20.1", "fabric")
                     }
 
-                    Button {
+                    FluButton {
                         text: "Refresh"
                         onClicked: appViewModel.refresh()
                     }
@@ -58,14 +314,14 @@ Item {
                     Column {
                         spacing: 4
 
-                        Text {
+                        FluText {
                             text: appViewModel.activeInstanceId.length > 0 ? "Active: " + appViewModel.activeInstanceId : "No active instance"
                             color: "#f5f8fb"
                             font.pixelSize: 16
                             font.bold: true
                         }
 
-                        Text {
+                        FluText {
                             text: appViewModel.activeInstanceWorkbench.instanceName.length > 0 ? appViewModel.activeInstanceWorkbench.instanceName : "Select an instance card to open its workbench"
                             color: "#9eb0c7"
                             font.pixelSize: 12
@@ -74,196 +330,22 @@ Item {
                 }
             }
 
-            DawnCard {
-                id: dropCard
+            EventCenterPanel {
                 Layout.fillWidth: true
-                Layout.preferredHeight: 210
-                title: "Local Drop Install"
-                subtitle: "Drop a jar, zip, or mrpack to classify it and install it into the active instance."
-
-                property bool dragActive: false
-
-                Item {
-                    anchors.fill: parent
-
-                    Rectangle {
-                        anchors.fill: parent
-                        radius: 18
-                        color: dropCard.dragActive ? Qt.rgba(0.18, 0.29, 0.44, 0.96) : Qt.rgba(1, 1, 1, 0.04)
-                        border.color: dropCard.dragActive ? "#8ec5ff" : Qt.rgba(1, 1, 1, 0.08)
-                        border.width: 1
-
-                        DropArea {
-                            anchors.fill: parent
-                            keys: ["text/uri-list"]
-                            onEntered: dropCard.dragActive = true
-                            onExited: dropCard.dragActive = false
-                            onDropped: function(drop) {
-                                dropCard.dragActive = false
-                                if (drop.urls.length > 0) {
-                                    appViewModel.handleDroppedFile(drop.urls[0].toLocalFile(), appViewModel.activeInstanceId)
-                                }
-                            }
-                        }
-
-                        Column {
-                            anchors.fill: parent
-                            anchors.margins: 18
-                            spacing: 10
-
-                            Text {
-                                text: dropCard.dragActive ? "Release to install into the active instance." : "Drag a local package here."
-                                color: "#f5f8fb"
-                                font.pixelSize: 18
-                                font.bold: true
-                            }
-
-                            Text {
-                                text: "Detected: " + (appViewModel.lastDroppedFileResult.detectedType || "unknown") + " | Status: " + (appViewModel.lastDroppedFileResult.status || "idle")
-                                color: "#9eb0c7"
-                                font.pixelSize: 12
-                            }
-
-                            Text {
-                                text: appViewModel.lastDroppedFileResult.message || "The workflow will resolve the target directory and record a local lock."
-                                color: "#dce5f0"
-                                font.pixelSize: 13
-                                wrapMode: Text.WordWrap
-                            }
-
-                            Text {
-                                visible: (appViewModel.lastDroppedFileResult.failureReason || "").length > 0
-                                text: "Reason: " + appViewModel.lastDroppedFileResult.failureReason
-                                color: "#f2c5ba"
-                                font.pixelSize: 12
-                                wrapMode: Text.WordWrap
-                            }
-
-                            Text {
-                                visible: (appViewModel.lastDroppedFileResult.reasons || []).length > 0
-                                text: "Reasons: " + (appViewModel.lastDroppedFileResult.reasons || []).join("  |  ")
-                                color: "#92a3ba"
-                                font.pixelSize: 11
-                                wrapMode: Text.WordWrap
-                            }
-
-                            Text {
-                                text: "Target: " + (appViewModel.lastDroppedFileResult.targetInstanceId || appViewModel.activeInstanceId || "none")
-                                color: "#92a3ba"
-                                font.pixelSize: 11
-                            }
-                        }
-                    }
-                }
-            }
-
-            DawnCard {
-                Layout.fillWidth: true
-                Layout.preferredHeight: 320
+                Layout.preferredHeight: 340
                 title: "Event Center"
                 subtitle: "Unified history for local drops, remote content installs, and repairs."
-
-                Column {
-                    anchors.fill: parent
-                    spacing: 10
-
-                    RowLayout {
-                        width: parent.width
-
-                        ComboBox {
-                            Layout.preferredWidth: 160
-                            model: [
-                                { "label": "All", "value": "all" },
-                                { "label": "Success", "value": "success" },
-                                { "label": "Failure", "value": "failure" }
-                            ]
-                            textRole: "label"
-                            valueRole: "value"
-                            currentIndex: appViewModel.installLogFilter === "success" ? 1 : (appViewModel.installLogFilter === "failure" ? 2 : 0)
-                            onActivated: appViewModel.setInstallLogFilter(currentValue)
-                        }
-
-                        ComboBox {
-                            Layout.preferredWidth: 190
-                            model: [
-                                { "label": "All Sources", "value": "all" },
-                                { "label": "Local Drop", "value": "local_drop" },
-                                { "label": "Remote Content", "value": "remote_content" },
-                                { "label": "Repair", "value": "repair" },
-                                { "label": "Diagnostic", "value": "diagnostic" }
-                            ]
-                            textRole: "label"
-                            valueRole: "value"
-                            currentIndex: appViewModel.installLogSourceFilter === "local_drop" ? 1 : (appViewModel.installLogSourceFilter === "remote_content" ? 2 : (appViewModel.installLogSourceFilter === "repair" ? 3 : (appViewModel.installLogSourceFilter === "diagnostic" ? 4 : 0)))
-                            onActivated: appViewModel.setInstallLogSourceFilter(currentValue)
-                        }
-
-                        ComboBox {
-                            Layout.preferredWidth: 150
-                            model: [
-                                { "label": "All Types", "value": "all" },
-                                { "label": "Install", "value": "install" },
-                                { "label": "Download", "value": "download" },
-                                { "label": "Repair", "value": "repair" },
-                                { "label": "Diagnostic", "value": "diagnostic" }
-                            ]
-                            textRole: "label"
-                            valueRole: "value"
-                            currentIndex: appViewModel.eventCenterTypeFilter === "install" ? 1 : (appViewModel.eventCenterTypeFilter === "download" ? 2 : (appViewModel.eventCenterTypeFilter === "repair" ? 3 : (appViewModel.eventCenterTypeFilter === "diagnostic" ? 4 : 0)))
-                            onActivated: appViewModel.setEventCenterTypeFilter(currentValue)
-                        }
-
-                        Button {
-                            text: "Open Context"
-                            enabled: (appViewModel.selectedEventContext.eventId || "").length > 0
-                            onClicked: appViewModel.navigateToEventContext()
-                        }
-
-                        Item { Layout.fillWidth: true }
-
-                        Text {
-                            text: appViewModel.eventCenter.length + " entries"
-                            color: "#8ea0b7"
-                            font.pixelSize: 11
-                        }
-                    }
-
-                    ListView {
-                        width: parent.width
-                        height: 176
-                        clip: true
-                        spacing: 8
-                        model: appViewModel.eventCenter
-
-                        delegate: Rectangle {
-                            width: ListView.view.width
-                            height: 70
-                            radius: 12
-                            color: modelData.selected ? Qt.rgba(0.24, 0.35, 0.52, 0.96) : (modelData.success ? Qt.rgba(0.14, 0.24, 0.18, 0.95) : Qt.rgba(0.28, 0.17, 0.16, 0.95))
-                            border.color: Qt.rgba(1, 1, 1, 0.05)
-
-                            MouseArea {
-                                anchors.fill: parent
-                                onClicked: appViewModel.selectEvent(modelData.eventId)
-                            }
-
-                            Column {
-                                anchors.fill: parent
-                                anchors.margins: 10
-                                spacing: 3
-                                Text { text: modelData.time + "  |  " + modelData.eventType + "  |  " + modelData.sourceType + "  |  " + modelData.result; color: "#f5f8fb"; font.pixelSize: 12; font.bold: true }
-                                Text { text: "Target: " + modelData.targetInstanceId + "  |  " + modelData.summary; color: "#dce5f0"; font.pixelSize: 11; wrapMode: Text.WordWrap }
-                            }
-                        }
-                    }
-
-                    Text {
-                        text: (appViewModel.selectedEventContext.eventId || "").length > 0 ? ("Context: " + appViewModel.selectedEventContext.eventType + " -> " + appViewModel.selectedEventContext.eventTargetPage + " | Instance " + (appViewModel.eventTargetInstanceId.length > 0 ? appViewModel.eventTargetInstanceId : "none") + " | Project " + (appViewModel.eventTargetProjectId.length > 0 ? appViewModel.eventTargetProjectId : "none")) : "Select an event to preview its target context."
-                        color: "#8ea0b7"
-                        font.pixelSize: 11
-                        wrapMode: Text.WordWrap
-                    }
-                }
+                eventsModel: root.appViewModel.eventCenter
+                selectedContext: root.appViewModel.selectedEventContext
+                selectedEventId: root.appViewModel.selectedEventId
+                statusFilter: root.appViewModel.installLogFilter
+                sourceFilter: root.appViewModel.installLogSourceFilter
+                typeFilter: root.appViewModel.eventCenterTypeFilter
+                onEventActivated: function(eventId) { root.appViewModel.selectEvent(eventId) }
+                onStatusFilterRequested: function(value) { root.appViewModel.setInstallLogFilter(value) }
+                onSourceFilterRequested: function(value) { root.appViewModel.setInstallLogSourceFilter(value) }
+                onTypeFilterRequested: function(value) { root.appViewModel.setEventCenterTypeFilter(value) }
+                onOpenContextRequested: function() { root.appViewModel.navigateToEventContext() }
             }
 
             RowLayout {
@@ -276,96 +358,35 @@ Item {
                     title: "Instance List"
                     subtitle: "Click a card to change the active workbench."
 
-                    Column {
-                        anchors.fill: parent
-                        spacing: 10
-
-                        Repeater {
-                            model: appViewModel.instanceCards
-
-                            delegate: Rectangle {
-                                width: parent.width
-                                height: 92
-                                radius: 16
-                                color: modelData.selected ? Qt.rgba(0.23, 0.34, 0.5, 0.95) : Qt.rgba(1, 1, 1, 0.03)
-                                border.color: modelData.selected ? Qt.rgba(0.44, 0.64, 0.96, 0.55) : Qt.rgba(1, 1, 1, 0.05)
-                                border.width: 1
-
-                                MouseArea {
-                                    anchors.fill: parent
-                                    onClicked: appViewModel.setActiveInstance(modelData.id)
-                                }
-
-                                RowLayout {
-                                    anchors.fill: parent
-                                    anchors.margins: 12
-                                    spacing: 12
-
-                                    Rectangle {
-                                        width: 48
-                                        height: 48
-                                        radius: 14
-                                        color: modelData.selected ? "#8ec5ff" : "#66a3ff"
-
-                                        Text {
-                                            anchors.centerIn: parent
-                                            text: modelData.name.length > 0 ? modelData.name[0].toUpperCase() : "D"
-                                            color: "white"
-                                            font.pixelSize: 18
-                                            font.bold: true
-                                        }
-                                    }
-
-                                    Column {
-                                        Layout.fillWidth: true
-                                        spacing: 2
-
-                                        Text {
-                                            text: modelData.name
-                                            color: "#f5f8fb"
-                                            font.pixelSize: 16
-                                            font.bold: true
-                                        }
-
-                                        Text {
-                                            text: modelData.mcVersion + "  |  " + modelData.loader + "  |  " + modelData.health
-                                            color: "#92a3ba"
-                                            font.pixelSize: 12
-                                        }
-
-                                        Text {
-                                            text: "Resources: " + modelData.resourceCount + "  |  Java: " + modelData.javaProfileId
-                                            color: "#92a3ba"
-                                            font.pixelSize: 12
-                                        }
-                                    }
-                                }
-                            }
-                        }
-
+                    Component {
+                        id: comOpenInstanceAction
                         Item {
-                            visible: appViewModel.instanceCount === 0
-                            height: 120
-                            width: parent.width
-
-                            Column {
+                            FluButton {
                                 anchors.centerIn: parent
-                                spacing: 8
-
-                                Text {
-                                    text: "No instances yet."
-                                    color: "#f5f8fb"
-                                    font.pixelSize: 18
-                                    font.bold: true
-                                }
-
-                                Text {
-                                    text: "Use the create buttons above to write the first manifest."
-                                    color: "#8ea0b7"
-                                    font.pixelSize: 12
+                                text: "Open"
+                                onClicked: {
+                                    if (options && options.instanceId) {
+                                        appViewModel.setActiveInstance(options.instanceId)
+                                    }
                                 }
                             }
                         }
+                    }
+
+                    FluTableView {
+                        id: instanceTable
+                        anchors.fill: parent
+                        columnSource: [
+                            { "title": "Active", "dataIndex": "selected", "width": 60 },
+                            { "title": "Name", "dataIndex": "name", "width": 150 },
+                            { "title": "MC", "dataIndex": "mcVersion", "width": 80 },
+                            { "title": "Loader", "dataIndex": "loader", "width": 90 },
+                            { "title": "Health", "dataIndex": "health", "width": 120 },
+                            { "title": "Resources", "dataIndex": "resourceCount", "width": 90 },
+                            { "title": "Java", "dataIndex": "javaProfileId", "width": 120 },
+                            { "title": "Action", "dataIndex": "openAction", "width": 80 }
+                        ]
+                        dataSource: root.instanceTableRows()
                     }
                 }
 
@@ -375,62 +396,189 @@ Item {
                     title: "Instance Workbench"
                     subtitle: appViewModel.activeInstanceWorkbench.instanceName.length > 0 ? appViewModel.activeInstanceWorkbench.instanceName : "Overview, mods, packs, logs, runtime, and advanced settings."
 
-                    Column {
+                    FluPivot {
                         anchors.fill: parent
-                        spacing: 14
-
-                        TabBar {
-                            id: tabBar
-                            width: parent.width
-                            currentIndex: root.tabIndex(appViewModel.activeInstanceWorkbench.selectedTabId)
-
-                            Repeater {
-                                model: appViewModel.instanceWorkbenchTabs
-
-                                delegate: TabButton {
-                                    text: modelData.title
-                                    checked: tabBar.currentIndex === index
-                                    onClicked: appViewModel.setActiveInstanceTab(modelData.id)
-                                }
+                        currentIndex: root.tabIndex(appViewModel.activeInstanceWorkbench.selectedTabId)
+                        onCurrentIndexChanged: {
+                            var tabs = appViewModel.instanceWorkbenchTabs || []
+                            if (currentIndex >= 0 && currentIndex < tabs.length) {
+                                appViewModel.setActiveInstanceTab(tabs[currentIndex].id)
                             }
                         }
 
-                        StackLayout {
-                            width: parent.width
-                            currentIndex: root.tabIndex(appViewModel.activeInstanceWorkbench.selectedTabId)
+                        Repeater {
+                            model: appViewModel.instanceWorkbenchTabs
 
-                            Repeater {
-                                model: appViewModel.instanceWorkbenchTabs
+                            delegate: FluPivotItem {
+                                title: modelData.title
+                                contentItem: Component {
+                                    DawnCard {
+                                        title: modelData.title
+                                        subtitle: modelData.summary
 
-                                delegate: DawnCard {
-                                    Layout.fillWidth: true
-                                    Layout.fillHeight: true
-                                    title: modelData.title
-                                    subtitle: modelData.summary
+                                        Column {
+                                            anchors.fill: parent
+                                            spacing: 10
 
-                                    Column {
-                                        anchors.fill: parent
-                                        spacing: 10
+                                            FluText {
+                                                text: "Instance: " + (appViewModel.activeInstanceWorkbench.instanceName.length > 0 ? appViewModel.activeInstanceWorkbench.instanceName : "None")
+                                                color: "#f5f8fb"
+                                                font.pixelSize: 18
+                                                font.bold: true
+                                            }
 
-                                        Text {
-                                            text: "Instance: " + (appViewModel.activeInstanceWorkbench.instanceName.length > 0 ? appViewModel.activeInstanceWorkbench.instanceName : "None")
-                                            color: "#f5f8fb"
-                                            font.pixelSize: 18
-                                            font.bold: true
-                                        }
+                                            FluText {
+                                                text: modelData.expert ? "Expert panel: advanced overrides are collapsed by default." : "Standard panel: core actions are kept in the foreground."
+                                                color: "#dce5f0"
+                                                font.pixelSize: 13
+                                                wrapMode: Text.WordWrap
+                                            }
 
-                                        Text {
-                                            text: modelData.expert ? "Expert panel: advanced overrides are collapsed by default." : "Standard panel: core actions are kept in the foreground."
-                                            color: "#dce5f0"
-                                            font.pixelSize: 13
-                                            wrapMode: Text.WordWrap
-                                        }
+                                            FluTableView {
+                                                id: assetTable
+                                                visible: modelData.id === "mods" || modelData.id === "resourcepacks" || modelData.id === "shaderpacks" || modelData.id === "worlds" || modelData.id === "logs"
+                                                width: parent.width
+                                                height: 260
+                                                columnSource: root.workbenchColumns(modelData.id)
+                                                dataSource: root.workbenchRows(modelData.id, assetTable)
+                                            }
 
-                                        Text {
-                                            text: root.workbenchTextFor(modelData.id)
-                                            color: "#92a3ba"
-                                            font.pixelSize: 12
-                                            wrapMode: Text.WordWrap
+                                            RowLayout {
+                                                visible: root.isRemovableTab(modelData.id)
+                                                width: parent.width
+                                                spacing: 10
+
+                                                FluButton {
+                                                    visible: root.isTogglableTab(modelData.id)
+                                                    text: "Enable All"
+                                                    onClicked: {
+                                                        var count = root.appViewModel.setAllAssetsEnabled(modelData.id, true)
+                                                        var win = root.Window.window
+                                                        if (win && win.showSuccess) {
+                                                            win.showSuccess("Bulk enable complete", 2200, "Updated: " + count)
+                                                        }
+                                                    }
+                                                }
+
+                                                FluButton {
+                                                    visible: root.isTogglableTab(modelData.id)
+                                                    text: "Disable All"
+                                                    onClicked: {
+                                                        var count = root.appViewModel.setAllAssetsEnabled(modelData.id, false)
+                                                        var win = root.Window.window
+                                                        if (win && win.showSuccess) {
+                                                            win.showSuccess("Bulk disable complete", 2200, "Updated: " + count)
+                                                        }
+                                                    }
+                                                }
+
+                                                FluButton {
+                                                    visible: root.isTogglableTab(modelData.id)
+                                                    text: "Delete Disabled"
+                                                    onClicked: {
+                                                        var count = root.appViewModel.removeDisabledAssets(modelData.id)
+                                                        var win = root.Window.window
+                                                        if (win && win.showSuccess) {
+                                                            win.showSuccess("Disabled assets removed", 2200, "Removed: " + count)
+                                                        }
+                                                    }
+                                                }
+
+                                                FluFilledButton {
+                                                    visible: root.isRemovableTab(modelData.id)
+                                                    text: "Clear All"
+                                                    onClicked: {
+                                                        var count = root.appViewModel.removeAllAssets(modelData.id)
+                                                        var win = root.Window.window
+                                                        if (win && win.showSuccess) {
+                                                            win.showSuccess("Assets cleared", 2200, "Removed: " + count)
+                                                        }
+                                                    }
+                                                }
+                                            }
+
+                                            FluFrame {
+                                                visible: modelData.id === "overview"
+                                                width: parent.width
+                                                height: 210
+                                                radius: 12
+                                                color: Qt.rgba(1, 1, 1, 0.03)
+                                                border.color: Qt.rgba(1, 1, 1, 0.08)
+
+                                                Column {
+                                                    anchors.fill: parent
+                                                    anchors.margins: 12
+                                                    spacing: 8
+                                                    FluText {
+                                                        text: root.activePreflight().ready ? "Launch readiness: ready" : "Launch readiness: attention required"
+                                                        color: root.activePreflight().ready ? "#9ce3b6" : "#f2c5ba"
+                                                        font.pixelSize: 13
+                                                        font.bold: true
+                                                    }
+                                                    FluText {
+                                                        text: "Mods: " + root.assetList("mods").length
+                                                              + "  |  Resourcepacks: " + root.assetList("resourcepacks").length
+                                                              + "  |  Shaderpacks: " + root.assetList("shaderpacks").length
+                                                              + "  |  Worlds: " + root.assetList("worlds").length
+                                                        color: "#dce5f0"
+                                                        font.pixelSize: 12
+                                                    }
+                                                    FluText {
+                                                        text: root.workbenchTextFor(modelData.id)
+                                                        color: "#92a3ba"
+                                                        font.pixelSize: 12
+                                                        wrapMode: Text.WordWrap
+                                                    }
+                                                }
+                                            }
+
+                                            FluFrame {
+                                                visible: modelData.id === "runtime"
+                                                width: parent.width
+                                                height: 220
+                                                radius: 12
+                                                color: Qt.rgba(1, 1, 1, 0.03)
+                                                border.color: Qt.rgba(1, 1, 1, 0.08)
+
+                                                Column {
+                                                    anchors.fill: parent
+                                                    anchors.margins: 12
+                                                    spacing: 6
+                                                    FluText { text: "Java Profile: " + (appViewModel.activeInstanceAssets.runtime.javaProfileId || ""); color: "#dce5f0"; font.pixelSize: 12 }
+                                                    FluText { text: "Memory Profile: " + (appViewModel.activeInstanceAssets.runtime.memoryProfile || ""); color: "#dce5f0"; font.pixelSize: 12 }
+                                                    FluText { text: "Minecraft: " + (appViewModel.activeInstanceAssets.runtime.mcVersion || ""); color: "#dce5f0"; font.pixelSize: 12 }
+                                                    FluText { text: "Loader: " + (appViewModel.activeInstanceAssets.runtime.loader || "") + " " + (appViewModel.activeInstanceAssets.runtime.loaderVersion || ""); color: "#dce5f0"; font.pixelSize: 12 }
+                                                    FluText { text: "Java Strategy: " + appViewModel.javaStrategy; color: "#8ea0b7"; font.pixelSize: 12 }
+                                                    FluText { text: "Game Dir: " + (appViewModel.activeInstanceAssets.runtime.gameDir || ""); color: "#8ea0b7"; font.pixelSize: 12; wrapMode: Text.WordWrap }
+                                                }
+                                            }
+
+                                            FluFrame {
+                                                visible: modelData.id === "advanced"
+                                                width: parent.width
+                                                height: 220
+                                                radius: 12
+                                                color: Qt.rgba(1, 1, 1, 0.03)
+                                                border.color: Qt.rgba(1, 1, 1, 0.08)
+
+                                                Column {
+                                                    anchors.fill: parent
+                                                    anchors.margins: 12
+                                                    spacing: 6
+                                                    FluText { text: "UI Mode: " + appViewModel.uiMode; color: "#dce5f0"; font.pixelSize: 12 }
+                                                    FluText { text: "Backup Strategy: " + appViewModel.backupStrategy; color: "#dce5f0"; font.pixelSize: 12 }
+                                                    FluText { text: "Scheduled Backup: " + (appViewModel.backupScheduleDate.length > 0 ? appViewModel.backupScheduleDate : "not-set") + " " + (appViewModel.backupScheduleTime.length > 0 ? appViewModel.backupScheduleTime : "not-set"); color: "#dce5f0"; font.pixelSize: 12 }
+                                                    FluText { text: "Low Disk Threshold: " + appViewModel.lowDiskThresholdGb + " GB"; color: "#8ea0b7"; font.pixelSize: 12 }
+                                                    FluText { text: root.workbenchTextFor(modelData.id); color: "#8ea0b7"; font.pixelSize: 12; wrapMode: Text.WordWrap }
+                                                }
+                                            }
+
+                                            FluText {
+                                                visible: modelData.id === "mods" || modelData.id === "resourcepacks" || modelData.id === "shaderpacks" || modelData.id === "worlds" || modelData.id === "logs"
+                                                text: root.workbenchItemCount(modelData.id) > 0 ? ("Items: " + root.workbenchItemCount(modelData.id)) : "No items found in the instance directory."
+                                                color: "#8ea0b7"
+                                                font.pixelSize: 12
+                                            }
                                         }
                                     }
                                 }
@@ -461,7 +609,8 @@ Item {
         case "advanced":
             return "Expert-only flags, launch arguments, and overrides are intentionally collapsed."
         default:
-            return "Workbench content placeholder."
+            return "Workbench content is loaded from the active instance manifest."
         }
     }
 }
+

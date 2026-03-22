@@ -2,6 +2,7 @@
 
 #include "dawn/core/pipeline/task_pipeline.h"
 #include "dawn/core/local/local_package_service.h"
+#include "dawn/core/service/instance_service.h"
 #include "dawn/core/service/task_queue.h"
 #include "dawn/core/serialization/manifest_codec.h"
 #include "dawn/infra/fs/file_system.h"
@@ -161,6 +162,29 @@ std::string filename_from_url(const std::string& url) {
     const auto clean = cut == std::string::npos ? url : url.substr(0, cut);
     const auto filename = std::filesystem::path(clean).filename().string();
     return filename.empty() ? std::string() : filename;
+}
+
+InstanceManifest create_modpack_instance(
+    const std::filesystem::path& root,
+    const std::string& nameHint,
+    const std::string& mcVersionHint,
+    LoaderType loaderHint,
+    std::string* error) {
+    InstanceManifest manifest;
+    manifest.name = nameHint.empty() ? "Modpack Instance" : nameHint;
+    manifest.mcVersion = mcVersionHint.empty() ? "latest" : mcVersionHint;
+    manifest.loaderType = loaderHint;
+    manifest.loaderVersion = loaderHint == LoaderType::None ? std::string() : "latest";
+    manifest.javaProfileId = "default-java";
+    manifest.memoryProfile = "4G";
+    manifest.themeColor = "#66a3ff";
+    manifest.notes = "auto-created for modpack install";
+
+    InstanceService service(root);
+    if (!service.create_instance(manifest, error)) {
+        return {};
+    }
+    return manifest;
 }
 
 std::filesystem::path local_staging_path_for(const InstanceManifest& instance, const std::filesystem::path& sourcePath, LocalPackageType type) {
@@ -687,25 +711,142 @@ ContentInstallResult ContentInstallService::install(const InstallRequest& reques
     result.plan = build_install_plan(request);
 
     if (request.projectType == ProjectType::Modpack) {
+        TaskPipeline pipeline(result.plan);
+        pipeline.start();
+        result.status = ContentInstallStatus::Pending;
         result.requiresNewInstance = true;
-        result.status = ContentInstallStatus::CreateInstanceRequired;
-        result.message = "create instance required";
-        result.plan.status = TaskStatus::Paused;
-        result.taskResult.planId = result.plan.id;
-        result.taskResult.status = TaskStatus::Paused;
-        result.taskResult.summary = result.message;
-        result.logs.push_back("modpack install requires a new instance");
+        result.logs.push_back("modpack install started: " + request.projectId);
 
         if (queue) {
             result.queuedTaskId = queue->enqueue(result.plan);
-            if (auto* task = queue->find(result.queuedTaskId)) {
-                task->status = TaskStatus::Paused;
-                if (!task->steps.empty()) {
-                    task->steps.front().status = TaskStatus::Paused;
-                    task->steps.front().detail = result.message;
-                }
+            queue->start(result.queuedTaskId);
+        }
+
+        const auto versions = provider.versions(request.projectId);
+        const auto selected = std::find_if(versions.begin(), versions.end(), [&](const ContentVersion& version) {
+            return request.versionId.empty() || version.versionId == request.versionId;
+        });
+        if (selected == versions.end()) {
+            fail_result(&result, &pipeline, queue, "download", "modpack version not found");
+            add_rollback_event(&result, "download", "abort install", std::filesystem::path(request.projectId), "blocked", "modpack version not found");
+            return result;
+        }
+        if (selected->fileUrls.empty()) {
+            fail_result(&result, &pipeline, queue, "download", "modpack version has no downloadable artifacts");
+            add_rollback_event(&result, "download", "abort install", std::filesystem::path(request.projectId), "blocked", "modpack version has no downloadable artifacts");
+            return result;
+        }
+
+        std::string instanceError;
+        auto instance = create_modpack_instance(
+            root_,
+            selected->name.empty() ? ("Modpack " + request.projectId) : selected->name,
+            selected->gameVersions.empty() ? std::string() : selected->gameVersions.front(),
+            selected->loaders.empty() ? LoaderType::None : selected->loaders.front(),
+            &instanceError);
+        if (instance.id.empty()) {
+            fail_result(&result, &pipeline, queue, "create-instance", instanceError.empty() ? "failed to create modpack instance" : instanceError);
+            add_rollback_event(&result, "create-instance", "abort install", std::filesystem::path(request.projectId), "failed", result.message);
+            return result;
+        }
+        pipeline.advance_step("create-instance", TaskStatus::Succeeded, "created instance " + instance.id);
+        if (queue && !result.queuedTaskId.empty()) {
+            queue->complete_step(result.queuedTaskId, "create-instance", TaskStatus::Succeeded, "created instance " + instance.id);
+        }
+        result.logs.push_back("created instance: " + instance.id);
+
+        const auto stagingPath = staging_path_for(instance, request, *selected);
+        const auto finalPath = final_path_for(instance, request, *selected);
+        result.deployedPath = finalPath;
+        InstallRequest lockRequest = request;
+        lockRequest.instanceId = instance.id;
+        result.lockPath = lock_path_for(lockRequest, instance);
+
+        auto rollback_artifacts = [&](const std::string& step, bool includeFinalPath, bool includeLockPath) {
+            cleanup_target(&result, step, "remove staging", stagingPath);
+            if (includeFinalPath) {
+                cleanup_target(&result, step, "remove deployed artifact", finalPath);
+            }
+            if (includeLockPath && !result.lockPath.empty()) {
+                cleanup_target(&result, step, "remove lock", result.lockPath);
+            }
+        };
+
+        DownloadRequest downloadRequest;
+        downloadRequest.id = make_install_id(request);
+        downloadRequest.title = "Modpack " + request.projectId;
+        downloadRequest.url = selected->fileUrls.front();
+        downloadRequest.destination = stagingPath;
+        downloadRequest.retryCount = 2;
+        downloadRequest.overwriteExisting = true;
+
+        result.downloadResult = downloadService_.execute(downloadRequest);
+        add_logs(&result, result.downloadResult.logs, "download: ");
+        if (!result.downloadResult.success) {
+            result.message = result.downloadResult.error.empty() ? "download failed" : result.downloadResult.error;
+            fail_result(&result, &pipeline, queue, "download", result.message);
+            rollback_artifacts("download", false, false);
+            return result;
+        }
+        pipeline.advance_step("download", TaskStatus::Succeeded, "modpack downloaded");
+        if (queue && !result.queuedTaskId.empty()) {
+            queue->complete_step(result.queuedTaskId, "download", TaskStatus::Succeeded, "modpack downloaded");
+        }
+
+        std::string deployError;
+        if (!ensure_directory(finalPath.parent_path(), &deployError)) {
+            fail_result(&result, &pipeline, queue, "deploy", deployError);
+            rollback_artifacts("deploy", false, false);
+            return result;
+        }
+        std::error_code ec;
+        std::filesystem::copy_file(stagingPath, finalPath, std::filesystem::copy_options::overwrite_existing, ec);
+        if (ec) {
+            fail_result(&result, &pipeline, queue, "deploy", ec.message());
+            rollback_artifacts("deploy", false, false);
+            return result;
+        }
+        pipeline.advance_step("deploy", TaskStatus::Succeeded, "modpack artifact deployed");
+        if (queue && !result.queuedTaskId.empty()) {
+            queue->complete_step(result.queuedTaskId, "deploy", TaskStatus::Succeeded, "modpack artifact deployed");
+        }
+
+        result.lock.provider = provider_name(request);
+        result.lock.projectId = request.projectId;
+        result.lock.versionId = selected->versionId;
+        result.lock.fileHash = result.downloadResult.artifact.checksum;
+        result.lock.installedPath = finalPath;
+        result.lock.enabled = true;
+        result.lock.dependencies = merge_dependencies(*selected, DependencyGraph{});
+        std::string lockError;
+        if (!write_text_file(result.lockPath, content_lock_to_text(result.lock), &lockError)) {
+            fail_result(&result, &pipeline, queue, "lock", lockError);
+            rollback_artifacts("lock", true, true);
+            return result;
+        }
+        pipeline.advance_step("lock", TaskStatus::Succeeded, "content lock written");
+        if (queue && !result.queuedTaskId.empty()) {
+            queue->complete_step(result.queuedTaskId, "lock", TaskStatus::Succeeded, "content lock written");
+        }
+
+        {
+            std::error_code cleanupEc;
+            const auto removed = std::filesystem::remove_all(stagingPath, cleanupEc);
+            if (cleanupEc) {
+                result.logs.push_back("cleanup: failed to remove staging " + stagingPath.generic_string() + ": " + cleanupEc.message());
+            } else if (removed > 0) {
+                result.logs.push_back("cleanup: removed staging " + stagingPath.generic_string());
             }
         }
+
+        result.plan = pipeline.plan();
+        result.taskResult = pipeline.finish("modpack installed into new instance");
+        result.logs.insert(result.logs.end(), result.taskResult.logs.begin(), result.taskResult.logs.end());
+        result.status = ContentInstallStatus::Succeeded;
+        result.success = true;
+        result.message = "modpack installed into new instance";
+        result.installedInstanceId = instance.id;
+        result.logs.push_back("target instance: " + instance.id);
         return result;
     }
 
@@ -748,6 +889,7 @@ ContentInstallResult ContentInstallService::install(const InstallRequest& reques
         add_rollback_event(&result, "resolve", "abort install", std::filesystem::path(request.projectId), "blocked", result.message);
         return result;
     }
+    result.installedInstanceId = instance->id;
 
     const auto versions = provider.versions(request.projectId);
     if (versions.empty()) {
@@ -912,17 +1054,123 @@ ContentInstallResult ContentInstallService::install_local_file(const std::filesy
 
     if (analysis.type == LocalPackageType::Modpack) {
         result.requiresNewInstance = true;
-        result.status = ContentInstallStatus::CreateInstanceRequired;
-        result.message = "local modpack requires creating a new instance";
-        result.plan.status = TaskStatus::Paused;
-        result.logs.push_back(result.message);
+        result.status = ContentInstallStatus::Pending;
+        result.logs.push_back("local modpack install started");
 
+        TaskPipeline pipeline(result.plan);
+        pipeline.start();
         if (queue) {
             result.queuedTaskId = queue->enqueue(result.plan);
             queue->start(result.queuedTaskId);
-            queue->pause(result.queuedTaskId);
         }
-        set_task_result(TaskStatus::Paused, result.message);
+
+        std::string instanceError;
+        auto instance = create_modpack_instance(
+            root_,
+            sourcePath.stem().string(),
+            "latest",
+            LoaderType::None,
+            &instanceError);
+        if (instance.id.empty()) {
+            fail_result(&result, &pipeline, queue, "create-instance", instanceError.empty() ? "failed to create instance for local modpack" : instanceError);
+            add_rollback_event(&result, "create-instance", "abort local install", sourcePath, "failed", result.message);
+            return result;
+        }
+        pipeline.advance_step("create-instance", TaskStatus::Succeeded, "created instance " + instance.id);
+        if (queue && !result.queuedTaskId.empty()) {
+            queue->complete_step(result.queuedTaskId, "create-instance", TaskStatus::Succeeded, "created instance " + instance.id);
+        }
+        result.logs.push_back("created instance: " + instance.id);
+
+        const auto finalPath = local_final_path_for(instance, sourcePath, analysis.type);
+        const auto stagingPath = local_staging_path_for(instance, sourcePath, analysis.type);
+        result.deployedPath = finalPath;
+        request.instanceId = instance.id;
+        result.lockPath = lock_path_for(request, instance);
+
+        auto rollback_artifacts = [&](const std::string& step, bool includeFinalPath, bool includeLockPath) {
+            cleanup_target(&result, step, "remove staging", stagingPath);
+            if (includeFinalPath) {
+                cleanup_target(&result, step, "remove deployed artifact", finalPath);
+            }
+            if (includeLockPath && !result.lockPath.empty()) {
+                cleanup_target(&result, step, "remove lock", result.lockPath);
+            }
+        };
+
+        std::string ioError;
+        if (!ensure_directory(stagingPath.parent_path(), &ioError)) {
+            fail_result(&result, &pipeline, queue, "download", ioError);
+            rollback_artifacts("download", false, false);
+            return result;
+        }
+        std::error_code ec;
+        std::filesystem::copy_file(sourcePath, stagingPath, std::filesystem::copy_options::overwrite_existing, ec);
+        if (ec) {
+            fail_result(&result, &pipeline, queue, "download", ec.message());
+            rollback_artifacts("download", false, false);
+            return result;
+        }
+        pipeline.advance_step("download", TaskStatus::Succeeded, "local modpack staged");
+        if (queue && !result.queuedTaskId.empty()) {
+            queue->complete_step(result.queuedTaskId, "download", TaskStatus::Succeeded, "local modpack staged");
+        }
+
+        if (!ensure_directory(finalPath.parent_path(), &ioError)) {
+            fail_result(&result, &pipeline, queue, "deploy", ioError);
+            rollback_artifacts("deploy", false, false);
+            return result;
+        }
+        std::filesystem::copy_file(stagingPath, finalPath, std::filesystem::copy_options::overwrite_existing, ec);
+        if (ec) {
+            fail_result(&result, &pipeline, queue, "deploy", ec.message());
+            rollback_artifacts("deploy", false, false);
+            return result;
+        }
+        pipeline.advance_step("deploy", TaskStatus::Succeeded, "local modpack deployed");
+        if (queue && !result.queuedTaskId.empty()) {
+            queue->complete_step(result.queuedTaskId, "deploy", TaskStatus::Succeeded, "local modpack deployed");
+        }
+
+        std::string hashError;
+        const auto checksum = dawn::infra::hash::sha256_file_hex(sourcePath, &hashError);
+        result.lock.provider = "local";
+        result.lock.projectId = request.projectId;
+        result.lock.versionId = checksum.empty() ? timestamp_id() : checksum;
+        result.lock.fileHash = checksum;
+        result.lock.installedPath = finalPath;
+        result.lock.enabled = true;
+        result.lock.dependencies.clear();
+
+        std::string lockError;
+        if (!write_text_file(result.lockPath, content_lock_to_text(result.lock), &lockError)) {
+            fail_result(&result, &pipeline, queue, "lock", lockError);
+            rollback_artifacts("lock", true, true);
+            return result;
+        }
+        pipeline.advance_step("lock", TaskStatus::Succeeded, "content lock written");
+        if (queue && !result.queuedTaskId.empty()) {
+            queue->complete_step(result.queuedTaskId, "lock", TaskStatus::Succeeded, "content lock written");
+        }
+
+        {
+            std::error_code cleanupEc;
+            const auto removed = std::filesystem::remove_all(stagingPath, cleanupEc);
+            if (cleanupEc) {
+                result.logs.push_back("cleanup: failed to remove staging " + stagingPath.generic_string() + ": " + cleanupEc.message());
+            } else if (removed > 0) {
+                result.logs.push_back("cleanup: removed staging " + stagingPath.generic_string());
+            }
+        }
+
+        result.plan = pipeline.plan();
+        result.taskResult = pipeline.finish("local modpack installed into new instance");
+        result.logs.insert(result.logs.end(), result.taskResult.logs.begin(), result.taskResult.logs.end());
+        result.status = ContentInstallStatus::Succeeded;
+        result.success = true;
+        result.message = "local modpack installed into new instance";
+        result.installedInstanceId = instance.id;
+        result.logs.push_back("target instance: " + instance.id);
         return result;
     }
 
@@ -943,6 +1191,7 @@ ContentInstallResult ContentInstallService::install_local_file(const std::filesy
         add_rollback_event(&result, "resolve", "abort local install", sourcePath, "blocked", message);
         return result;
     }
+    result.installedInstanceId = instance->id;
 
     std::string hashError;
     const auto checksum = dawn::infra::hash::sha256_file_hex(sourcePath, &hashError);

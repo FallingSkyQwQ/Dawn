@@ -28,6 +28,7 @@ struct ContentInstallResult {
     bool requiresNewInstance = false;
     ContentInstallStatus status = ContentInstallStatus::Pending;
     std::string message;
+    std::string installedInstanceId;
     std::string queuedTaskId;
     std::filesystem::path deployedPath;
     std::filesystem::path lockPath;

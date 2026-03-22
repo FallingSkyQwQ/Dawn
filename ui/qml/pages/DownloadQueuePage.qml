@@ -1,11 +1,64 @@
 import QtQuick
 import QtQuick.Controls
 import QtQuick.Layouts
+import FluentUI 1.0
 import "../components"
 
 Item {
     id: root
     property var appViewModel
+
+    function progressValue(completedSteps, stepCount) {
+        if (!stepCount || stepCount <= 0) {
+            return 0
+        }
+        var ratio = completedSteps / stepCount
+        if (ratio < 0) {
+            return 0
+        }
+        if (ratio > 1) {
+            return 1
+        }
+        return ratio
+    }
+
+    function queueProgressValue() {
+        var cards = appViewModel ? appViewModel.taskCards : []
+        if (cards.length === 0) {
+            return 0
+        }
+        var totalDone = 0
+        var totalSteps = 0
+        for (var i = 0; i < cards.length; ++i) {
+            totalDone += cards[i].completedSteps || 0
+            totalSteps += cards[i].stepCount || 0
+        }
+        return progressValue(totalDone, totalSteps)
+    }
+
+    function queueProgressText() {
+        var value = Math.round(queueProgressValue() * 100)
+        return value + "%"
+    }
+
+    function taskRows() {
+        var rows = []
+        var cards = appViewModel ? appViewModel.taskCards : []
+        for (var i = 0; i < cards.length; ++i) {
+            var item = cards[i]
+            var ratio = progressValue(item.completedSteps || 0, item.stepCount || 0)
+            rows.push({
+                "_key": item.id || ("task-row-" + i),
+                "title": item.title || "",
+                "status": item.status || "",
+                "completedSteps": item.completedSteps || 0,
+                "stepCount": item.stepCount || 0,
+                "progress": Math.round(ratio * 100) + "%",
+                "progressBar": queueTable.customItem(comTaskProgress, { "value": ratio })
+            })
+        }
+        return rows
+    }
 
     Flickable {
         anchors.fill: parent
@@ -28,80 +81,110 @@ Item {
                     anchors.fill: parent
                     spacing: 8
 
-                    Text {
+                    FluText {
                         text: "Task states are managed by the core queue model and surfaced to QML as cards."
                         color: "#dce5f0"
                         font.pixelSize: 14
                     }
 
-                    Text {
-                        text: "The actual network and decompression work is intentionally stubbed in this first pass."
+                    FluText {
+                        text: "Network transfer, verification, and install execution are orchestrated through the task pipeline."
                         color: "#8ea0b7"
                         font.pixelSize: 12
                     }
                 }
             }
 
-            ColumnLayout {
+            DawnCard {
                 Layout.fillWidth: true
-                spacing: 12
+                Layout.preferredHeight: 150
+                title: "Queue Progress"
+                subtitle: appViewModel.taskCount > 0 ? "Live progress from queued task steps." : "No active tasks."
 
-                Repeater {
-                    model: appViewModel.taskCards
+                RowLayout {
+                    anchors.fill: parent
+                    spacing: 16
 
-                    delegate: DawnCard {
+                    FluProgressRing {
+                        Layout.preferredWidth: 56
+                        Layout.preferredHeight: 56
+                        indeterminate: false
+                        progressVisible: true
+                        value: root.queueProgressValue()
+                    }
+
+                    Column {
                         Layout.fillWidth: true
-                        Layout.preferredHeight: 140
-                        title: modelData.title
-                        subtitle: modelData.status
+                        spacing: 8
 
-                        Column {
-                            anchors.fill: parent
-                            spacing: 8
+                        FluText {
+                            text: "Overall completion: " + root.queueProgressText()
+                            color: "#f5f8fb"
+                            font.pixelSize: 14
+                            font.bold: true
+                        }
 
-                            Text {
-                                text: "Steps: " + modelData.completedSteps + " / " + modelData.stepCount
-                                color: "#f5f8fb"
-                                font.pixelSize: 14
-                            }
+                        FluProgressBar {
+                            width: parent.width
+                            indeterminate: false
+                            progressVisible: true
+                            value: root.queueProgressValue()
+                        }
+                    }
+                }
+            }
 
-                            Rectangle {
-                                width: parent.width
-                                height: 8
-                                radius: 4
-                                color: Qt.rgba(1, 1, 1, 0.08)
+            DawnCard {
+                Layout.fillWidth: true
+                Layout.preferredHeight: 360
+                title: "Queue Table"
+                subtitle: "Structured queue rows rendered with FluTableView."
 
-                                Rectangle {
-                                    width: parent.width * (modelData.stepCount === 0 ? 0 : modelData.completedSteps / modelData.stepCount)
-                                    height: parent.height
-                                    radius: 4
-                                    color: "#66a3ff"
-                                }
-                            }
+                Component {
+                    id: comTaskProgress
+                    Item {
+                        FluProgressBar {
+                            anchors.verticalCenter: parent.verticalCenter
+                            width: Math.max(parent.width - 12, 24)
+                            x: 6
+                            indeterminate: false
+                            progressVisible: false
+                            value: options && options.value !== undefined ? options.value : 0
                         }
                     }
                 }
 
-                Item {
-                    visible: appViewModel.taskCount === 0
-                    Layout.fillWidth: true
-                    Layout.preferredHeight: 220
+                FluTableView {
+                    id: queueTable
+                    anchors.fill: parent
+                    columnSource: [
+                        { "title": "Task", "dataIndex": "title", "width": 300 },
+                        { "title": "Status", "dataIndex": "status", "width": 120 },
+                        { "title": "Completed", "dataIndex": "completedSteps", "width": 90 },
+                        { "title": "Steps", "dataIndex": "stepCount", "width": 80 },
+                        { "title": "Progress", "dataIndex": "progress", "width": 80 },
+                        { "title": "Bar", "dataIndex": "progressBar", "width": 170 }
+                    ]
+                    dataSource: root.taskRows()
+                }
+            }
 
-                    DawnCard {
-                        anchors.fill: parent
-                        title: "Idle Queue"
-                        subtitle: "No tasks are waiting. Queue a demo install from the content page."
+            DawnCard {
+                visible: appViewModel.taskCount === 0
+                Layout.fillWidth: true
+                Layout.preferredHeight: 180
+                title: "Idle Queue"
+                subtitle: "No tasks are waiting. Queue a demo install from the content page."
 
-                        Column {
-                            anchors.centerIn: parent
-                            spacing: 8
+                Column {
+                    anchors.centerIn: parent
+                    spacing: 8
 
-                            Text { text: "The queue is empty."; color: "#f5f8fb"; font.pixelSize: 18; font.bold: true }
-                            Text { text: "Pause, resume, retry, and concurrent scheduling are reserved for the next phase."; color: "#8ea0b7"; font.pixelSize: 12 }
-                        }
-                    }
+                    FluText { text: "The queue is empty."; color: "#f5f8fb"; font.pixelSize: 18; font.bold: true }
+                    FluText { text: "Pause, resume, retry, and concurrent scheduling are reserved for the next phase."; color: "#8ea0b7"; font.pixelSize: 12 }
                 }
             }
         }
     }
 }
+

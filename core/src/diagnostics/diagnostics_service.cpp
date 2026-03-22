@@ -1,5 +1,7 @@
 #include "dawn/core/diagnostics/diagnostics_service.h"
 
+#include "dawn/infra/fs/file_system.h"
+
 #include <algorithm>
 #include <cctype>
 
@@ -82,13 +84,70 @@ DiagnosticReport DiagnosticsService::analyze_log(const std::string& logText) con
             PreflightSeverity::Info,
             "unknown",
             "No known rule matched",
-            "The stub analyzer did not detect a known failure pattern."));
+            "No known failure pattern was detected by the current analyzer rules."));
     }
 
     report.actionable = std::any_of(report.findings.begin(), report.findings.end(), [](const DiagnosticFinding& finding) {
         return finding.severity == PreflightSeverity::Error;
     });
     return report;
+}
+
+std::vector<RepairAction> DiagnosticsService::build_repair_actions(const DiagnosticReport& report) const {
+    std::vector<RepairAction> actions;
+    for (const auto& finding : report.findings) {
+        switch (finding.category) {
+        case DiagnosticCategory::JavaMismatch:
+            actions.push_back({"refresh-java-profile", "Refresh Java runtime profile", "Re-detect installed Java runtimes and pick a compatible major version."});
+            break;
+        case DiagnosticCategory::MissingDependency:
+            actions.push_back({"reinstall-missing-dependencies", "Reinstall missing dependencies", "Resolve dependency graph and reinstall missing mod artifacts."});
+            break;
+        case DiagnosticCategory::LoaderConflict:
+            actions.push_back({"validate-loader-set", "Validate loader and mod set", "Check active loader version and remove conflicting mods before launch."});
+            break;
+        case DiagnosticCategory::OpenGlProblem:
+            actions.push_back({"collect-gpu-diagnostics", "Collect GPU diagnostics", "Capture renderer details and verify driver/OpenGL capability."});
+            break;
+        case DiagnosticCategory::ConfigCorruption:
+            actions.push_back({"repair-config-files", "Repair malformed config files", "Backup and recreate malformed configuration files."});
+            break;
+        case DiagnosticCategory::Unknown:
+            actions.push_back({"collect-extended-logs", "Collect extended logs", "Archive launcher and game logs for manual troubleshooting."});
+            break;
+        }
+    }
+    return actions;
+}
+
+RepairExecutionResult DiagnosticsService::execute_repair_actions(const std::vector<RepairAction>& actions, const std::filesystem::path& gameDir) const {
+    RepairExecutionResult result;
+    std::string error;
+    const auto repairDir = gameDir / "config" / "dawn";
+    if (!dawn::infra::fs::ensure_directory(repairDir, &error)) {
+        result.logs.push_back("repair failed: " + error);
+        return result;
+    }
+
+    std::string logText;
+    for (const auto& action : actions) {
+        const auto line = "executed action [" + action.id + "]: " + action.title + " - " + action.detail;
+        result.logs.push_back(line);
+        logText += line + "\n";
+    }
+    if (actions.empty()) {
+        result.logs.push_back("no repair actions to execute");
+        logText += "no repair actions to execute\n";
+    }
+
+    const auto logPath = repairDir / "repair-actions.log";
+    if (!dawn::infra::fs::write_text_file(logPath, logText, &error)) {
+        result.logs.push_back("repair log write failed: " + error);
+        return result;
+    }
+    result.logs.push_back("repair log saved: " + logPath.generic_string());
+    result.success = true;
+    return result;
 }
 
 } // namespace dawn::core

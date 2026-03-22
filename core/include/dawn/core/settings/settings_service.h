@@ -65,6 +65,8 @@ struct GlobalSettings {
     int minMemoryMb = 2048;
     int maxMemoryMb = 4096;
     BackupStrategy backupStrategy = BackupStrategy::BeforeUpdate;
+    std::string backupScheduleDate;
+    std::string backupScheduleTime = "03:00";
     bool firstLaunchCompleted = false;
     UiMode uiMode = UiMode::Novice;
     int lowDiskThresholdGb = 20;

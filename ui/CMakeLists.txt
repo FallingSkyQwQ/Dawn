@@ -21,8 +21,8 @@ target_link_libraries(dawn_ui
         Qt6::Quick
 )
 
-if(DAWN_USE_FLUENTUIBI AND EXISTS "${CMAKE_SOURCE_DIR}/external/FluentUIbi/CMakeLists.txt")
-    target_compile_definitions(dawn_ui PUBLIC DAWN_HAS_FLUENTUIBI=1)
+if(DAWN_USE_FLUENTUI AND TARGET fluentuiplugin)
+    target_compile_definitions(dawn_ui PUBLIC DAWN_HAS_FLUENTUI=1)
 endif()
 
 add_library(dawn::ui ALIAS dawn_ui)

@@ -68,8 +68,9 @@ int main(int argc, char* argv[]) {
 
     QQmlApplicationEngine engine;
     engine.rootContext()->setContextProperty("appViewModel", &viewModel);
+    engine.addImportPath(QString::fromUtf8(DAWN_FLUENTUI_IMPORT_PATH));
 
-    const QString qmlPath = QString::fromUtf8(DAWN_SOURCE_DIR) + "/ui/qml/main.qml";
+    const QString qmlPath = QString::fromUtf8(DAWN_SOURCE_DIR) + "/ui/qml/main_fluent.qml";
     engine.load(QUrl::fromLocalFile(qmlPath));
     if (engine.rootObjects().isEmpty()) {
         return -1;

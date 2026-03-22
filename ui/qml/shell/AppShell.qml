@@ -1,6 +1,7 @@
 import QtQuick
 import QtQuick.Controls
 import QtQuick.Layouts
+import FluentUI 1.0
 import "../components"
 import "../pages"
 
@@ -55,14 +56,14 @@ Item {
                             Column {
                                 spacing: 6
 
-                                Text {
+                                FluText {
                                     text: "Dawn"
                                     color: "#f4f7fb"
                                     font.pixelSize: 28
                                     font.bold: true
                                 }
 
-                                Text {
+                                FluText {
                                     text: "Instance-centric launcher shell"
                                     color: "#8798af"
                                     font.pixelSize: 12
@@ -79,7 +80,7 @@ Item {
                                     { "title": "设置", "subtitle": "Settings" }
                                 ]
 
-                                delegate: Button {
+                                delegate: FluButton {
                                     width: parent.width
                                     height: 56
                                     text: modelData.title + "\n" + modelData.subtitle
@@ -99,14 +100,14 @@ Item {
                                         anchors.margins: 10
                                         spacing: 2
 
-                                        Text {
+                                        FluText {
                                             text: modelData.title
                                             color: "#f5f8fb"
                                             font.pixelSize: 16
                                             font.bold: true
                                         }
 
-                                        Text {
+                                        FluText {
                                             text: modelData.subtitle
                                             color: "#93a4bb"
                                             font.pixelSize: 11
@@ -129,13 +130,13 @@ Item {
                                     anchors.fill: parent
                                     spacing: 6
 
-                                    Text {
-                                        text: "FluentUIbi switch is reserved for the upstream submodule."
+                                    FluText {
+                                        text: "FluentUI integration is provided by the upstream submodule."
                                         color: "#c5d0df"
                                         font.pixelSize: 12
                                         wrapMode: Text.WordWrap
                                     }
-                                    Text {
+                                    FluText {
                                         text: "This repository keeps the launcher usable even when the submodule is absent."
                                         color: "#93a4bb"
                                         font.pixelSize: 12
@@ -172,3 +173,4 @@ Item {
         }
     }
 }
+

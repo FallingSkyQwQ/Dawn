@@ -4,6 +4,7 @@
 #include "dawn/infra/json/simple_json.h"
 
 #include <chrono>
+#include <filesystem>
 #include <iomanip>
 #include <sstream>
 #include <utility>
@@ -52,14 +53,133 @@ SnapshotMetadata BackupService::create_snapshot_manifest(const InstanceManifest&
     snapshot.instanceId = manifest.id;
     snapshot.label = label.empty() ? "manual snapshot" : label;
     snapshot.createdAt = timestamp_now();
-    snapshot.archivePath = snapshot_directory(manifest.id) / (snapshot.snapshotId + ".json");
+    snapshot.archivePath = snapshot_directory(manifest.id) / snapshot.snapshotId;
     snapshot.reversible = true;
-    snapshot.note = "metadata only stub";
 
-    if (!dawn::infra::fs::write_text_file(snapshot.archivePath, dawn::infra::json::stringify(snapshot_to_json(snapshot), 2), error)) {
+    const auto metadataPath = snapshot_directory(manifest.id) / (snapshot.snapshotId + ".json");
+    std::error_code ec;
+    std::filesystem::create_directories(snapshot.archivePath, ec);
+    if (ec) {
+        if (error) {
+            *error = ec.message();
+        }
+        return SnapshotMetadata{};
+    }
+
+    std::size_t copiedEntries = 0;
+    const auto sourceGameDir = std::filesystem::path(manifest.gameDir);
+    if (!manifest.gameDir.empty() && std::filesystem::exists(sourceGameDir, ec) && !ec) {
+        const auto destination = snapshot.archivePath / "game";
+        std::filesystem::create_directories(destination, ec);
+        if (ec) {
+            if (error) {
+                *error = ec.message();
+            }
+            return SnapshotMetadata{};
+        }
+        for (const auto& entry : std::filesystem::recursive_directory_iterator(sourceGameDir, ec)) {
+            if (ec) {
+                if (error) {
+                    *error = ec.message();
+                }
+                return SnapshotMetadata{};
+            }
+            const auto relative = std::filesystem::relative(entry.path(), sourceGameDir, ec);
+            if (ec) {
+                continue;
+            }
+            const auto target = destination / relative;
+            if (entry.is_directory()) {
+                std::filesystem::create_directories(target, ec);
+                if (ec) {
+                    if (error) {
+                        *error = ec.message();
+                    }
+                    return SnapshotMetadata{};
+                }
+                continue;
+            }
+            std::filesystem::create_directories(target.parent_path(), ec);
+            if (ec) {
+                if (error) {
+                    *error = ec.message();
+                }
+                return SnapshotMetadata{};
+            }
+            std::filesystem::copy_file(entry.path(), target, std::filesystem::copy_options::overwrite_existing, ec);
+            if (ec) {
+                if (error) {
+                    *error = ec.message();
+                }
+                return SnapshotMetadata{};
+            }
+            ++copiedEntries;
+        }
+    }
+    snapshot.note = "copied " + std::to_string(copiedEntries) + " file(s)";
+
+    if (!dawn::infra::fs::write_text_file(metadataPath, dawn::infra::json::stringify(snapshot_to_json(snapshot), 2), error)) {
         return SnapshotMetadata{};
     }
     return snapshot;
+}
+
+bool BackupService::restore_snapshot(const SnapshotMetadata& snapshot, const std::filesystem::path& targetGameDir, std::string* error) const {
+    const auto sourceGameDir = snapshot.archivePath / "game";
+    std::error_code ec;
+    if (!std::filesystem::exists(sourceGameDir, ec) || ec) {
+        if (error) {
+            *error = "snapshot game payload not found";
+        }
+        return false;
+    }
+
+    std::filesystem::create_directories(targetGameDir, ec);
+    if (ec) {
+        if (error) {
+            *error = ec.message();
+        }
+        return false;
+    }
+
+    for (const auto& entry : std::filesystem::recursive_directory_iterator(sourceGameDir, ec)) {
+        if (ec) {
+            if (error) {
+                *error = ec.message();
+            }
+            return false;
+        }
+        const auto relative = std::filesystem::relative(entry.path(), sourceGameDir, ec);
+        if (ec) {
+            continue;
+        }
+        const auto target = targetGameDir / relative;
+        if (entry.is_directory()) {
+            std::filesystem::create_directories(target, ec);
+            if (ec) {
+                if (error) {
+                    *error = ec.message();
+                }
+                return false;
+            }
+            continue;
+        }
+        std::filesystem::create_directories(target.parent_path(), ec);
+        if (ec) {
+            if (error) {
+                *error = ec.message();
+            }
+            return false;
+        }
+        std::filesystem::copy_file(entry.path(), target, std::filesystem::copy_options::overwrite_existing, ec);
+        if (ec) {
+            if (error) {
+                *error = ec.message();
+            }
+            return false;
+        }
+    }
+    return true;
 }
 
 std::vector<SnapshotMetadata> BackupService::list_snapshots(const std::string& instanceId, std::string* error) const {

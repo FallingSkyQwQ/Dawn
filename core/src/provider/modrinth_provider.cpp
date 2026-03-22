@@ -139,45 +139,13 @@ std::string array_query_value(const std::vector<std::string>& values) {
 }
 
 SearchResult fallback_search_result(const SearchQuery& query) {
-    SearchResult result;
-
-    SearchResultItem item;
-    item.projectId = "dawn-demo-project";
-    item.title = query.text.empty() ? "Dawn Demo Project" : "Dawn Match: " + query.text;
-    item.summary = "Local provider stub for Modrinth-style search.";
-    item.author = "Dawn";
-    item.updatedAt = "2026-03-22T00:00:00Z";
-    item.downloads = 1024;
-    item.projectType = query.projectType;
-    item.supportedGameVersions = query.gameVersions.empty() ? std::vector<std::string>{"1.20.1"} : query.gameVersions;
-    const auto combined_loaders = !query.loaders.empty() ? loader_strings(query.loaders) : loader_strings_from_categories(query.categories);
-    if (combined_loaders.empty()) {
-        item.supportedLoaders = {LoaderType::Fabric};
-    } else {
-        for (const auto& loader_name : combined_loaders) {
-            const auto loader = loader_type_from_string(loader_name);
-            if (loader != LoaderType::None) {
-                item.supportedLoaders.push_back(loader);
-            }
-        }
-    }
-    result.items.push_back(std::move(item));
-    return result;
+    (void)query;
+    return {};
 }
 
 std::vector<ContentVersion> fallback_versions(const std::string& projectId) {
-    ContentVersion version;
-    version.versionId = projectId + "-v1";
-    version.name = "Local stub build";
-    version.fileUrls = {"https://example.invalid/" + projectId + ".jar"};
-    version.dependencies = {
-        {"dawn-core", {}, {}, DependencyRequirement::Required, "runtime core dependency"},
-        {"ui-helper", {}, {}, DependencyRequirement::Optional, "visual helper pack"},
-        {"legacy-loader", {}, {}, DependencyRequirement::Incompatible, "known loader conflict"},
-    };
-    version.gameVersions = {"1.20.1"};
-    version.loaders = {LoaderType::Fabric, LoaderType::Forge};
-    return {std::move(version)};
+    (void)projectId;
+    return {};
 }
 
 SearchResultItem parse_search_hit(const Value::Object& object, const SearchQuery& fallbackQuery) {

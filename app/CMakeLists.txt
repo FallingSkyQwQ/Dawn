@@ -26,8 +26,13 @@ if(DAWN_ENABLE_QT)
         target_link_libraries(dawn PRIVATE dawn_ui)
     endif()
 
-    if(DAWN_USE_FLUENTUIBI AND EXISTS "${CMAKE_SOURCE_DIR}/external/FluentUIbi/CMakeLists.txt")
-        add_subdirectory(${CMAKE_SOURCE_DIR}/external/FluentUIbi external/FluentUIbi)
-        target_compile_definitions(dawn PRIVATE DAWN_USE_FLUENTUIBI=1)
+    if(NOT TARGET fluentuiplugin)
+        message(FATAL_ERROR "fluentuiplugin target is required for Dawn Qt application.")
     endif()
+    target_compile_definitions(dawn
+        PRIVATE
+            DAWN_USE_FLUENTUI=1
+            DAWN_FLUENTUI_IMPORT_PATH="${FLUENTUI_QML_PLUGIN_DIRECTORY}"
+    )
+    add_dependencies(dawn fluentuiplugin)
 endif()

@@ -2,11 +2,17 @@ pragma ComponentBehavior: Bound
 import QtQuick
 import QtQuick.Controls
 import QtQuick.Layouts
+import FluentUI 1.0
 import "../components"
 
 Item {
     id: root
     property var appViewModel
+    property string lastShownAutoCreatedInstanceId: ""
+    property int searchPageCurrent: 1
+    property int searchItemsPerPage: 8
+    property int versionPageCurrent: 1
+    property int versionItemsPerPage: 6
 
     function findIndexById(list, id, roleName) {
         for (var i = 0; i < list.length; ++i) {
@@ -21,29 +27,77 @@ Item {
         root.appViewModel.searchContent(searchField.text, projectTypeBox.currentValue)
     }
 
-    function flattenTree(node, depth, rows) {
+    function toDependencyTreeNodes(node) {
         if (!node || !node.id) {
-            return
+            return []
         }
-        rows.push({
-            "depth": depth,
-            "id": node.id,
-            "versionId": node.versionId,
-            "status": node.status,
-            "requirement": node.requirement,
-            "message": node.message
-        })
+        var treeNode = {
+            "title": node.id + ((node.versionId || "").length > 0 ? (" @ " + node.versionId) : ""),
+            "status": node.status || "",
+            "requirement": node.requirement || "",
+            "message": node.message || "",
+            "children": []
+        }
         if (node.children) {
             for (var i = 0; i < node.children.length; ++i) {
-                flattenTree(node.children[i], depth + 1, rows)
+                var childNodes = toDependencyTreeNodes(node.children[i])
+                if (childNodes.length > 0) {
+                    treeNode.children.push(childNodes[0])
+                }
             }
         }
+        return [treeNode]
     }
 
-    function dependencyRows() {
-        var rows = []
-        flattenTree(root.appViewModel.installPreview.dependencyTree, 0, rows)
-        return rows
+    function dependencyTreeData() {
+        return toDependencyTreeNodes(root.appViewModel.installPreview.dependencyTree)
+    }
+
+    function dependencyNodeCount(node) {
+        if (!node || !node.id) {
+            return 0
+        }
+        var count = 1
+        if (node.children) {
+            for (var i = 0; i < node.children.length; ++i) {
+                count += dependencyNodeCount(node.children[i])
+            }
+        }
+        return count
+    }
+
+    function dependencyReadyCount(node) {
+        if (!node || !node.id) {
+            return 0
+        }
+        var ready = (node.status === "ready" || node.status === "installed" || node.status === "embedded") ? 1 : 0
+        if (node.children) {
+            for (var i = 0; i < node.children.length; ++i) {
+                ready += dependencyReadyCount(node.children[i])
+            }
+        }
+        return ready
+    }
+
+    function dependencyProgressValue() {
+        var rootNode = root.appViewModel ? root.appViewModel.installPreview.dependencyTree : null
+        var total = dependencyNodeCount(rootNode)
+        if (total <= 0) {
+            return 0
+        }
+        var ready = dependencyReadyCount(rootNode)
+        var ratio = ready / total
+        if (ratio < 0) {
+            return 0
+        }
+        if (ratio > 1) {
+            return 1
+        }
+        return ratio
+    }
+
+    function dependencyProgressText() {
+        return Math.round(dependencyProgressValue() * 100) + "%"
     }
 
     function dependencyStatusColor(status) {
@@ -61,6 +115,126 @@ Item {
 
     function rowsForInstances() {
         return root.appViewModel.instanceCards
+    }
+
+    function searchResultRows() {
+        var rows = []
+        var data = root.appViewModel ? root.appViewModel.contentSearchResults : []
+        for (var i = 0; i < data.length; ++i) {
+            var item = data[i]
+            rows.push({
+                "_key": item.projectId || ("search-" + i),
+                "projectId": item.projectId || "",
+                "title": item.title || "",
+                "author": item.author || "",
+                "downloads": item.downloads || 0,
+                "summary": item.summary || "",
+                "projectType": item.projectType || "",
+                "selected": item.selected ? "yes" : "",
+                "action": searchResultsTable.customItem(comSearchSelectAction, { "projectId": item.projectId || "" })
+            })
+        }
+        return rows
+    }
+
+    function pagedRows(rows, pageCurrent, itemsPerPage) {
+        if (!rows || rows.length === 0) {
+            return []
+        }
+        if (itemsPerPage <= 0) {
+            return rows
+        }
+        var page = pageCurrent
+        if (page < 1) {
+            page = 1
+        }
+        var start = (page - 1) * itemsPerPage
+        if (start >= rows.length) {
+            return []
+        }
+        var end = Math.min(start + itemsPerPage, rows.length)
+        return rows.slice(start, end)
+    }
+
+    function searchPageCount() {
+        var total = root.appViewModel ? root.appViewModel.contentSearchResults.length : 0
+        return total > 0 ? Math.ceil(total / searchItemsPerPage) : 0
+    }
+
+    function versionPageCount() {
+        var total = root.appViewModel ? root.appViewModel.contentVersions.length : 0
+        return total > 0 ? Math.ceil(total / versionItemsPerPage) : 0
+    }
+
+    function normalizePage(page, count) {
+        if (count <= 0) {
+            return 1
+        }
+        if (page < 1) {
+            return 1
+        }
+        if (page > count) {
+            return count
+        }
+        return page
+    }
+
+    function pagedSearchResultRows() {
+        return pagedRows(searchResultRows(), searchPageCurrent, searchItemsPerPage)
+    }
+
+    function versionRows() {
+        var rows = []
+        var data = root.appViewModel ? root.appViewModel.contentVersions : []
+        for (var i = 0; i < data.length; ++i) {
+            var item = data[i]
+            rows.push({
+                "_key": item.versionId || ("version-" + i),
+                "versionId": item.versionId || "",
+                "name": (item.name && item.name.length > 0) ? item.name : (item.versionId || ""),
+                "gameVersions": (item.gameVersions && item.gameVersions.length > 0) ? item.gameVersions.join(", ") : "Any",
+                "loaders": (item.loaders && item.loaders.length > 0) ? item.loaders.join(", ") : "Any",
+                "selected": item.selected ? "yes" : "",
+                "action": versionsTable.customItem(comVersionSelectAction, { "versionId": item.versionId || "" })
+            })
+        }
+        return rows
+    }
+
+    function pagedVersionRows() {
+        return pagedRows(versionRows(), versionPageCurrent, versionItemsPerPage)
+    }
+
+    function showAutoCreatedInstanceInfoBar() {
+        if (!root.appViewModel || !root.appViewModel.autoCreatedInstanceNoticeVisible) {
+            return
+        }
+        var instanceId = root.appViewModel.autoCreatedInstanceId || ""
+        if (instanceId.length === 0 || instanceId === root.lastShownAutoCreatedInstanceId) {
+            return
+        }
+        var win = root.Window.window
+        if (win && win.showSuccess) {
+            win.showSuccess(root.appViewModel.autoCreatedInstanceNoticeText, 3600, "Target instance has been activated.")
+        }
+        root.lastShownAutoCreatedInstanceId = instanceId
+        root.appViewModel.clearAutoCreatedInstanceNotice()
+    }
+
+    Connections {
+        target: root.appViewModel
+        function onDataChanged() {
+            root.showAutoCreatedInstanceInfoBar()
+            root.searchPageCurrent = root.normalizePage(root.searchPageCurrent, root.searchPageCount())
+            root.versionPageCurrent = root.normalizePage(root.versionPageCurrent, root.versionPageCount())
+            if (dependencyTreeView) {
+                dependencyTreeView.dataSource = root.dependencyTreeData()
+            }
+        }
+    }
+
+    Component.onCompleted: {
+        root.showAutoCreatedInstanceInfoBar()
     }
 
     Flickable {
@@ -88,14 +262,14 @@ Item {
                         Layout.fillWidth: true
                         spacing: 10
 
-                        TextField {
+                        FluTextBox {
                             id: searchField
                             Layout.fillWidth: true
                             placeholderText: "Search mods, modpacks, resource packs, shaders"
-                            onAccepted: root.searchNow()
+                            onCommit: function() { root.searchNow() }
                         }
 
-                        ComboBox {
+                        FluComboBox {
                             id: projectTypeBox
                             Layout.preferredWidth: 180
                             textRole: "label"
@@ -109,7 +283,7 @@ Item {
                             currentIndex: 0
                         }
 
-                        Button {
+                        FluFilledButton {
                             text: "Search"
                             onClicked: root.searchNow()
                         }
@@ -119,7 +293,7 @@ Item {
                         Layout.fillWidth: true
                         spacing: 10
 
-                        ComboBox {
+                        FluComboBox {
                             id: instanceBox
                             Layout.fillWidth: true
                             textRole: "name"
@@ -129,13 +303,13 @@ Item {
                             onActivated: root.appViewModel.selectTargetInstance(currentValue)
                         }
 
-                        Button {
+                        FluButton {
                             text: "Refresh Preview"
                             onClicked: root.appViewModel.refreshInstallPreview()
                         }
                     }
 
-                    Text {
+                    FluText {
                         text: root.appViewModel.installPreviewStatus
                         color: root.appViewModel.installPreview.blocked ? "#ffb74d" : "#4bd18f"
                         font.pixelSize: 13
@@ -146,18 +320,49 @@ Item {
                         Layout.fillWidth: true
                         spacing: 10
 
-                        Button {
+                        FluFilledButton {
                             text: "Install Selected"
                             enabled: !root.appViewModel.installPreview.blocked && root.appViewModel.selectedContentProjectId.length > 0 && root.appViewModel.selectedContentVersionId.length > 0
                             onClicked: root.appViewModel.installSelectedContent()
                         }
 
-                        Text {
+                        FluText {
                             Layout.fillWidth: true
                             text: root.appViewModel.contentInstallStatus
                             color: "#dce5f0"
                             font.pixelSize: 12
                             wrapMode: Text.WordWrap
+                        }
+                    }
+
+                    RowLayout {
+                        Layout.fillWidth: true
+                        spacing: 12
+
+                        FluProgressRing {
+                            Layout.preferredWidth: 46
+                            Layout.preferredHeight: 46
+                            indeterminate: false
+                            progressVisible: true
+                            value: root.dependencyProgressValue()
+                        }
+
+                        Column {
+                            Layout.fillWidth: true
+                            spacing: 6
+
+                            FluText {
+                                text: "Dependency readiness: " + root.dependencyProgressText()
+                                color: "#dce5f0"
+                                font.pixelSize: 12
+                            }
+
+                            FluProgressBar {
+                                width: parent.width
+                                indeterminate: false
+                                progressVisible: true
+                                value: root.dependencyProgressValue()
+                            }
                         }
                     }
                 }
@@ -174,69 +379,53 @@ Item {
 
                     DawnCard {
                         Layout.fillWidth: true
-                        Layout.preferredHeight: 340
+                        Layout.preferredHeight: 390
                         title: "Search Results"
                         subtitle: root.appViewModel.contentSearchResults.length > 0 ? "Select a result to load versions and preview." : "Run a search to populate results."
 
-                        Column {
-                            anchors.fill: parent
-                            spacing: 10
-
-                            Repeater {
-                                model: root.appViewModel.contentSearchResults
-
-                                delegate: Rectangle {
-                                    width: parent.width
-                                    height: 96
-                                    radius: 14
-                                    color: modelData.selected ? Qt.rgba(0.23, 0.34, 0.5, 0.95) : Qt.rgba(1, 1, 1, 0.03)
-                                    border.color: modelData.selected ? Qt.rgba(0.48, 0.64, 0.98, 0.45) : Qt.rgba(1, 1, 1, 0.05)
-                                    border.width: 1
-
-                                    MouseArea {
-                                        anchors.fill: parent
-                                        onClicked: root.appViewModel.selectSearchResult(modelData.projectId)
-                                    }
-
-                                    RowLayout {
-                                        anchors.fill: parent
-                                        anchors.margins: 12
-                                        spacing: 12
-
-                                        Rectangle {
-                                            Layout.preferredWidth: 48
-                                            Layout.preferredHeight: 48
-                                            radius: 14
-                                            color: modelData.selected ? "#8ec5ff" : "#66a3ff"
-                                            Text {
-                                                anchors.centerIn: parent
-                                                text: modelData.title.length > 0 ? modelData.title[0].toUpperCase() : "D"
-                                                color: "white"
-                                                font.pixelSize: 18
-                                                font.bold: true
-                                            }
-                                        }
-
-                                        Column {
-                                            Layout.fillWidth: true
-                                            spacing: 3
-                                            Text { text: modelData.title; color: "#f5f8fb"; font.pixelSize: 15; font.bold: true }
-                                            Text { text: modelData.author + "  |  " + modelData.downloads + " downloads"; color: "#9eb0c7"; font.pixelSize: 12 }
-                                            Text { text: modelData.summary; color: "#8ea0b7"; font.pixelSize: 12; wrapMode: Text.WordWrap }
+                        Component {
+                            id: comSearchSelectAction
+                            Item {
+                                FluButton {
+                                    anchors.centerIn: parent
+                                    text: "Select"
+                                    onClicked: {
+                                        if (options && options.projectId) {
+                                            root.appViewModel.selectSearchResult(options.projectId)
                                         }
                                     }
                                 }
                             }
+                        }
 
-                            Item {
-                                visible: root.appViewModel.contentSearchResults.length === 0
-                                height: 120
-                                width: parent.width
-                                Column {
-                                    anchors.centerIn: parent
-                                    spacing: 8
-                                    Text { text: "No search results yet."; color: "#f5f8fb"; font.pixelSize: 16; font.bold: true }
-                                    Text { text: "Search by name or leave the default demo query to inspect the workflow."; color: "#8ea0b7"; font.pixelSize: 12; wrapMode: Text.WordWrap }
+                        ColumnLayout {
+                            anchors.fill: parent
+                            spacing: 10
+
+                            FluTableView {
+                                id: searchResultsTable
+                                Layout.fillWidth: true
+                                Layout.fillHeight: true
+                                columnSource: [
+                                    { "title": "Sel", "dataIndex": "selected", "width": 50 },
+                                    { "title": "Title", "dataIndex": "title", "width": 140 },
+                                    { "title": "Author", "dataIndex": "author", "width": 90 },
+                                    { "title": "Downloads", "dataIndex": "downloads", "width": 80 },
+                                    { "title": "Type", "dataIndex": "projectType", "width": 70 },
+                                    { "title": "Summary", "dataIndex": "summary", "width": 140 },
+                                    { "title": "Action", "dataIndex": "action", "width": 90 }
+                                ]
+                                dataSource: root.pagedSearchResultRows()
+                            }
+
+                            FluPagination {
+                                Layout.alignment: Qt.AlignHCenter
+                                pageCurrent: root.searchPageCurrent
+                                pageButtonCount: 5
+                                itemCount: root.appViewModel ? root.appViewModel.contentSearchResults.length : 0
+                                __itemPerPage: root.searchItemsPerPage
+                                onRequestPage: function(page) {
+                                    root.searchPageCurrent = page
                                 }
                             }
                         }
@@ -244,38 +433,52 @@ Item {
 
                     DawnCard {
                         Layout.fillWidth: true
-                        Layout.preferredHeight: 280
+                        Layout.preferredHeight: 330
                         title: "Versions"
                         subtitle: root.appViewModel.contentVersions.length > 0 ? "Pick a version for the selected project." : "No versions loaded yet."
 
-                        Column {
+                        Component {
+                            id: comVersionSelectAction
+                            Item {
+                                FluButton {
+                                    anchors.centerIn: parent
+                                    text: "Use"
+                                    onClicked: {
+                                        if (options && options.versionId) {
+                                            root.appViewModel.selectInstallVersion(options.versionId)
+                                        }
+                                    }
+                                }
+                            }
+                        }
+
+                        ColumnLayout {
                             anchors.fill: parent
                             spacing: 10
 
-                            Repeater {
-                                model: root.appViewModel.contentVersions
+                            FluTableView {
+                                id: versionsTable
+                                Layout.fillWidth: true
+                                Layout.fillHeight: true
+                                columnSource: [
+                                    { "title": "Sel", "dataIndex": "selected", "width": 50 },
+                                    { "title": "Name", "dataIndex": "name", "width": 130 },
+                                    { "title": "Game Versions", "dataIndex": "gameVersions", "width": 110 },
+                                    { "title": "Loaders", "dataIndex": "loaders", "width": 80 },
+                                    { "title": "Version ID", "dataIndex": "versionId", "width": 100 },
+                                    { "title": "Action", "dataIndex": "action", "width": 80 }
+                                ]
+                                dataSource: root.pagedVersionRows()
+                            }
 
-                                delegate: Rectangle {
-                                    width: parent.width
-                                    height: 78
-                                    radius: 14
-                                    color: modelData.selected ? Qt.rgba(0.18, 0.28, 0.42, 0.95) : Qt.rgba(1, 1, 1, 0.03)
-                                    border.color: modelData.selected ? Qt.rgba(0.48, 0.64, 0.98, 0.45) : Qt.rgba(1, 1, 1, 0.05)
-                                    border.width: 1
-
-                                    MouseArea {
-                                        anchors.fill: parent
-                                        onClicked: root.appViewModel.selectInstallVersion(modelData.versionId)
-                                    }
-
-                                    Column {
-                                        anchors.fill: parent
-                                        anchors.margins: 12
-                                        spacing: 4
-                                        Text { text: modelData.name.length > 0 ? modelData.name : modelData.versionId; color: "#f5f8fb"; font.pixelSize: 14; font.bold: true }
-                                        Text { text: modelData.gameVersions.length > 0 ? modelData.gameVersions.join(", ") : "Any game version"; color: "#9eb0c7"; font.pixelSize: 12 }
-                                        Text { text: modelData.loaders.length > 0 ? modelData.loaders.join(", ") : "Any loader"; color: "#8ea0b7"; font.pixelSize: 12 }
-                                    }
+                            FluPagination {
+                                Layout.alignment: Qt.AlignHCenter
+                                pageCurrent: root.versionPageCurrent
+                                pageButtonCount: 5
+                                itemCount: root.appViewModel ? root.appViewModel.contentVersions.length : 0
+                                __itemPerPage: root.versionItemsPerPage
+                                onRequestPage: function(page) {
+                                    root.versionPageCurrent = page
                                 }
                             }
                         }
@@ -287,159 +490,23 @@ Item {
                     Layout.fillHeight: true
                     spacing: 16
 
-                    DawnCard {
-                        Layout.fillWidth: true
-                        Layout.preferredHeight: 220
-                        title: "Install Preview"
-                        subtitle: root.appViewModel.installPreview.blocked ? "Blocked preview with actionable diagnostics." : "Preview is ready to install."
-
-                        Column {
-                            anchors.fill: parent
-                            spacing: 8
-
-                            Text {
-                                text: "Project: " + (root.appViewModel.installPreview.projectId.length > 0 ? root.appViewModel.installPreview.projectId : "none")
-                                color: "#dce5f0"
-                                font.pixelSize: 13
-                            }
-
-                            Text {
-                                text: "Version: " + (root.appViewModel.installPreview.versionId.length > 0 ? root.appViewModel.installPreview.versionId : "none")
-                                color: "#dce5f0"
-                                font.pixelSize: 13
-                            }
-
-                            Text {
-                                text: "Target: " + (root.appViewModel.installPreview.targetInstanceId.length > 0 ? root.appViewModel.installPreview.targetInstanceId : "none")
-                                color: "#dce5f0"
-                                font.pixelSize: 13
-                            }
-
-                            Text {
-                                text: root.appViewModel.installPreview.blocked ? "Preview blocked" : "Preview ready"
-                                color: root.appViewModel.installPreview.blocked ? "#ffb74d" : "#4bd18f"
-                                font.pixelSize: 16
-                                font.bold: true
-                            }
-
-                            Text {
-                                text: "Dependencies, version suggestions, and repair plan are derived from the current selection."
-                                color: "#8ea0b7"
-                                font.pixelSize: 12
-                                wrapMode: Text.WordWrap
-                            }
-                        }
-                    }
-
-                    DawnCard {
-                        Layout.fillWidth: true
-                        Layout.preferredHeight: 330
-                        title: "Event Center"
-                        subtitle: "Unified install, repair, download, and diagnostic history."
-
-                        Column {
-                            anchors.fill: parent
-                            spacing: 10
-
-                            RowLayout {
-                                width: parent.width
-                                spacing: 10
-
-                                ComboBox {
-                                    Layout.preferredWidth: 150
-                                    textRole: "label"
-                                    valueRole: "value"
-                                    model: [
-                                        { "label": "All", "value": "all" },
-                                        { "label": "Success", "value": "success" },
-                                        { "label": "Failure", "value": "failure" }
-                                    ]
-                                    currentIndex: root.appViewModel.installLogFilter === "success" ? 1 : (root.appViewModel.installLogFilter === "failure" ? 2 : 0)
-                                    onActivated: root.appViewModel.setInstallLogFilter(currentValue)
-                                }
-
-                                ComboBox {
-                                    Layout.preferredWidth: 190
-                                    textRole: "label"
-                                    valueRole: "value"
-                                    model: [
-                                        { "label": "All Sources", "value": "all" },
-                                        { "label": "Local Drop", "value": "local_drop" },
-                                        { "label": "Remote Content", "value": "remote_content" },
-                                        { "label": "Repair", "value": "repair" },
-                                        { "label": "Diagnostic", "value": "diagnostic" }
-                                    ]
-                                    currentIndex: root.appViewModel.installLogSourceFilter === "local_drop" ? 1 : (root.appViewModel.installLogSourceFilter === "remote_content" ? 2 : (root.appViewModel.installLogSourceFilter === "repair" ? 3 : (root.appViewModel.installLogSourceFilter === "diagnostic" ? 4 : 0)))
-                                    onActivated: root.appViewModel.setInstallLogSourceFilter(currentValue)
-                                }
-
-                                ComboBox {
-                                    Layout.preferredWidth: 150
-                                    textRole: "label"
-                                    valueRole: "value"
-                                    model: [
-                                        { "label": "All Types", "value": "all" },
-                                        { "label": "Install", "value": "install" },
-                                        { "label": "Download", "value": "download" },
-                                        { "label": "Repair", "value": "repair" },
-                                        { "label": "Diagnostic", "value": "diagnostic" }
-                                    ]
-                                    currentIndex: root.appViewModel.eventCenterTypeFilter === "install" ? 1 : (root.appViewModel.eventCenterTypeFilter === "download" ? 2 : (root.appViewModel.eventCenterTypeFilter === "repair" ? 3 : (root.appViewModel.eventCenterTypeFilter === "diagnostic" ? 4 : 0)))
-                                    onActivated: root.appViewModel.setEventCenterTypeFilter(currentValue)
-                                }
-
-                                Button {
-                                    text: "Open Context"
-                                    enabled: (root.appViewModel.selectedEventContext.eventId || "").length > 0
-                                    onClicked: root.appViewModel.navigateToEventContext()
-                                }
-
-                                Item { Layout.fillWidth: true }
-
-                                Text {
-                                    text: root.appViewModel.eventCenter.length + " entries"
-                                    color: "#8ea0b7"
-                                    font.pixelSize: 11
-                                }
-                            }
-
-                            ListView {
-                                width: parent.width
-                                height: 208
-                                clip: true
-                                spacing: 8
-                                model: root.appViewModel.eventCenter
-
-                                delegate: Rectangle {
-                                    width: ListView.view.width
-                                    height: 74
-                                    radius: 12
-                                    color: modelData.selected ? Qt.rgba(0.24, 0.35, 0.52, 0.96) : (modelData.success ? Qt.rgba(0.14, 0.24, 0.18, 0.95) : Qt.rgba(0.28, 0.17, 0.16, 0.95))
-                                    border.color: modelData.selected ? Qt.rgba(0.48, 0.64, 0.98, 0.55) : Qt.rgba(1, 1, 1, 0.05)
-
-                                    MouseArea {
-                                        anchors.fill: parent
-                                        onClicked: root.appViewModel.selectEvent(modelData.eventId)
-                                    }
-
-                                    Column {
-                                        anchors.fill: parent
-                                        anchors.margins: 10
-                                        spacing: 3
-                                        Text { text: modelData.time + "  |  " + modelData.eventType + "  |  " + modelData.sourceType + "  |  " + modelData.result; color: "#f5f8fb"; font.pixelSize: 12; font.bold: true }
-                                        Text { text: "Target: " + modelData.targetInstanceId + "  |  " + modelData.summary; color: "#dce5f0"; font.pixelSize: 11; wrapMode: Text.WordWrap }
-                                    }
-                                }
-                            }
-
-                            Text {
-                                text: (root.appViewModel.selectedEventContext.eventId || "").length > 0 ? ("Context: " + root.appViewModel.selectedEventContext.eventType + " -> " + root.appViewModel.selectedEventContext.eventTargetPage + " | Instance " + (root.appViewModel.eventTargetInstanceId.length > 0 ? root.appViewModel.eventTargetInstanceId : "none") + " | Project " + (root.appViewModel.eventTargetProjectId.length > 0 ? root.appViewModel.eventTargetProjectId : "none")) : "Select an event to preview its target context."
-                                color: "#8ea0b7"
-                                font.pixelSize: 11
-                                wrapMode: Text.WordWrap
-                            }
-                        }
-                    }
+                    EventCenterPanel {
+                Layout.fillWidth: true
+                Layout.preferredHeight: 360
+                title: "Event Center"
+                subtitle: "Unified history for local drops, remote content installs, and repairs."
+                eventsModel: root.appViewModel.eventCenter
+                selectedContext: root.appViewModel.selectedEventContext
+                selectedEventId: root.appViewModel.selectedEventId
+                statusFilter: root.appViewModel.installLogFilter
+                sourceFilter: root.appViewModel.installLogSourceFilter
+                typeFilter: root.appViewModel.eventCenterTypeFilter
+                onEventActivated: function(eventId) { root.appViewModel.selectEvent(eventId) }
+                onStatusFilterRequested: function(value) { root.appViewModel.setInstallLogFilter(value) }
+                onSourceFilterRequested: function(value) { root.appViewModel.setInstallLogSourceFilter(value) }
+                onTypeFilterRequested: function(value) { root.appViewModel.setEventCenterTypeFilter(value) }
+                onOpenContextRequested: function() { root.appViewModel.navigateToEventContext() }
+            }
 
                     RowLayout {
                         Layout.fillWidth: true
@@ -451,43 +518,20 @@ Item {
                             title: "Dependency Tree"
                             subtitle: "Structured blockers and dependencies."
 
-                            Column {
+                            FluTreeView {
+                                id: dependencyTreeView
                                 anchors.fill: parent
-                                spacing: 8
-
-                                Repeater {
-                                    model: root.dependencyRows()
-
-                                    delegate: Rectangle {
-                                        width: parent.width
-                                        height: 52
-                                        radius: 12
-                                        color: Qt.rgba(1, 1, 1, 0.03)
-                                        border.color: Qt.rgba(1, 1, 1, 0.05)
-
-                                        RowLayout {
-                                            anchors.fill: parent
-                                            anchors.margins: 10
-                                            spacing: 8
-
-                                            Item { Layout.preferredWidth: modelData.depth * 18; Layout.preferredHeight: 1 }
-
-                                            Column {
-                                                Layout.fillWidth: true
-                                                spacing: 2
-                                                Text { text: modelData.id + (modelData.versionId.length > 0 ? " @ " + modelData.versionId : ""); color: "#f5f8fb"; font.pixelSize: 13; font.bold: true }
-                                                Text { text: modelData.message; color: "#8ea0b7"; font.pixelSize: 11 }
-                                            }
-
-                                            Text {
-                                                text: modelData.status
-                                                color: root.dependencyStatusColor(modelData.status)
-                                                font.pixelSize: 11
-                                                font.bold: true
-                                            }
-                                        }
-                                    }
-                                }
+                                cellHeight: 42
+                                depthPadding: 14
+                                showLine: true
+                                checkable: false
+                                columnSource: [
+                                    { "title": "Dependency", "dataIndex": "title", "width": 260 },
+                                    { "title": "Status", "dataIndex": "status", "width": 100 },
+                                    { "title": "Requirement", "dataIndex": "requirement", "width": 100 },
+                                    { "title": "Message", "dataIndex": "message", "width": 260 }
+                                ]
+                                dataSource: root.dependencyTreeData()
                             }
                         }
 
@@ -504,7 +548,7 @@ Item {
                                 Repeater {
                                     model: root.appViewModel.installPreview.versionSuggestions
 
-                                    delegate: Rectangle {
+                                    delegate: FluFrame {
                                         width: parent.width
                                         height: 76
                                         radius: 12
@@ -520,8 +564,8 @@ Item {
                                             anchors.fill: parent
                                             anchors.margins: 10
                                             spacing: 3
-                                            Text { text: modelData.name; color: "#f5f8fb"; font.pixelSize: 13; font.bold: true }
-                                            Text { text: modelData.reason; color: "#8ea0b7"; font.pixelSize: 11; wrapMode: Text.WordWrap }
+                                            FluText { text: modelData.name; color: "#f5f8fb"; font.pixelSize: 13; font.bold: true }
+                                            FluText { text: modelData.reason; color: "#8ea0b7"; font.pixelSize: 11; wrapMode: Text.WordWrap }
                                         }
                                     }
                                 }
@@ -546,7 +590,7 @@ Item {
                                 Repeater {
                                     model: root.appViewModel.installPreview.repairPlan.steps
 
-                                    delegate: Rectangle {
+                                    delegate: FluFrame {
                                         width: parent.width
                                         height: 62
                                         radius: 12
@@ -557,8 +601,8 @@ Item {
                                             anchors.fill: parent
                                             anchors.margins: 10
                                             spacing: 3
-                                            Text { text: modelData.title; color: "#f5f8fb"; font.pixelSize: 13; font.bold: true }
-                                            Text { text: modelData.detail.length > 0 ? modelData.detail : modelData.status; color: "#8ea0b7"; font.pixelSize: 11 }
+                                            FluText { text: modelData.title; color: "#f5f8fb"; font.pixelSize: 13; font.bold: true }
+                                            FluText { text: modelData.detail.length > 0 ? modelData.detail : modelData.status; color: "#8ea0b7"; font.pixelSize: 11 }
                                         }
                                     }
                                 }
@@ -578,7 +622,7 @@ Item {
                                 Repeater {
                                     model: root.appViewModel.installDiagnostics
 
-                                    delegate: Rectangle {
+                                    delegate: FluFrame {
                                         width: parent.width
                                         height: 62
                                         radius: 12
@@ -589,8 +633,8 @@ Item {
                                             anchors.fill: parent
                                             anchors.margins: 10
                                             spacing: 3
-                                            Text { text: modelData.code + "  |  " + modelData.severity; color: "#f5f8fb"; font.pixelSize: 12; font.bold: true }
-                                            Text { text: modelData.message; color: "#8ea0b7"; font.pixelSize: 11; wrapMode: Text.WordWrap }
+                                            FluText { text: modelData.code + "  |  " + modelData.severity; color: "#f5f8fb"; font.pixelSize: 12; font.bold: true }
+                                            FluText { text: modelData.message; color: "#8ea0b7"; font.pixelSize: 11; wrapMode: Text.WordWrap }
                                         }
                                     }
                                 }

@@ -1,11 +1,99 @@
 import QtQuick
 import QtQuick.Controls
 import QtQuick.Layouts
+import FluentUI 1.0
 import "../components"
 
 Item {
     id: root
     property var appViewModel
+
+    function recommendationCards() {
+        var cards = []
+        var instances = appViewModel ? appViewModel.instanceCards : []
+        var maxItems = Math.min(instances.length, 4)
+        for (var i = 0; i < maxItems; ++i) {
+            var item = instances[i]
+            cards.push({
+                "title": item.name || "Instance",
+                "subtitle": "MC " + (item.mcVersion || "-") + "  |  " + (item.loader || "none"),
+                "detail": "Health: " + (item.health || "Unknown") + "  |  Resources: " + (item.resourceCount || 0),
+                "accent": (item.health || "").toLowerCase().indexOf("needs") >= 0 ? "#c86b5a" : "#4c8ad8"
+            })
+        }
+        if (cards.length === 0) {
+            cards.push({
+                "title": "Create your first instance",
+                "subtitle": "Use the action above to bootstrap a runnable profile.",
+                "detail": "Dawn will keep runtime, content, and saves isolated per instance.",
+                "accent": "#4c8ad8"
+            })
+            cards.push({
+                "title": "Queue and repair visibility",
+                "subtitle": "Download and repair workflows are visible from dedicated pages.",
+                "detail": "Use Content Center and Logs & Repair to inspect full execution details.",
+                "accent": "#5d86b5"
+            })
+        }
+        return cards
+    }
+
+    function homeInstanceRows() {
+        var rows = []
+        var data = appViewModel ? appViewModel.instanceCards : []
+        for (var i = 0; i < data.length; ++i) {
+            var item = data[i]
+            rows.push({
+                "_key": item.id || ("instance-" + i),
+                "name": item.name || "",
+                "mcVersion": item.mcVersion || "",
+                "loader": item.loader || "",
+                "health": item.health || "",
+                "resourceCount": item.resourceCount || 0
+            })
+        }
+        return rows
+    }
+
+    function homeTaskRows() {
+        var rows = []
+        var data = appViewModel ? appViewModel.taskCards : []
+        for (var i = 0; i < data.length; ++i) {
+            var item = data[i]
+            rows.push({
+                "_key": item.id || ("task-" + i),
+                "title": item.title || "",
+                "status": item.status || "",
+                "completedSteps": item.completedSteps || 0,
+                "stepCount": item.stepCount || 0
+            })
+        }
+        return rows
+    }
+
+    function previewPanels() {
+        var panels = []
+        panels.push({
+            "title": "Primary Instance",
+            "body": appViewModel.primaryInstanceId.length > 0
+                    ? ("Current primary instance: " + appViewModel.primaryInstanceId)
+                    : "No primary instance yet. Create one to unlock full runtime workflow.",
+            "accent": "#4c8ad8"
+        })
+        panels.push({
+            "title": "Preflight State",
+            "body": appViewModel.primaryPreflight.ready
+                    ? "Preflight checks are green for the primary instance."
+                    : "Preflight found issues. Open Logs & Repair for diagnostics and repair plan.",
+            "accent": appViewModel.primaryPreflight.ready ? "#4baf76" : "#c86b5a"
+        })
+        panels.push({
+            "title": "Queue Snapshot",
+            "body": "Queued tasks: " + appViewModel.taskCount + ". Download, verify, and install stages are tracked in queue and event center.",
+            "accent": "#5d86b5"
+        })
+        return panels
+    }
 
     Flickable {
         anchors.fill: parent
@@ -32,15 +120,15 @@ Item {
                         Layout.fillWidth: true
                         spacing: 10
 
-                        Text {
+                        FluText {
                             text: "A calmer launcher shell for instance-centric Minecraft workflows."
                             color: "#eff4fa"
                             font.pixelSize: 18
                             wrapMode: Text.WordWrap
                         }
 
-                        Text {
-                            text: "The current build exposes the core flow without depending on FluentUIbi or online services."
+                        FluText {
+                            text: "The current build exposes the full instance workflow on top of FluentUI."
                             color: "#8ea0b7"
                             font.pixelSize: 13
                             wrapMode: Text.WordWrap
@@ -50,14 +138,133 @@ Item {
                     Column {
                         spacing: 10
 
-                        Button {
+                        FluFilledButton {
                             text: "Create Demo Instance"
                             onClicked: appViewModel.createInstance("Dawn Sandbox", "1.20.1", "none")
                         }
 
-                        Button {
+                        FluButton {
                             text: "Queue Demo Task"
-                            onClicked: appViewModel.enqueueDemoTask("Install stub content")
+                            onClicked: appViewModel.enqueueDemoTask("Install curated content")
+                        }
+                    }
+                }
+            }
+
+            DawnCard {
+                Layout.fillWidth: true
+                Layout.preferredHeight: 280
+                title: "Recommended Workspace"
+                subtitle: "Fluent carousel for recent instances and guided actions."
+
+                FluCarousel {
+                    anchors.fill: parent
+                    autoPlay: true
+                    loopTime: 2600
+                    indicatorGravity: Qt.AlignBottom | Qt.AlignHCenter
+                    indicatorMarginBottom: 10
+                    model: root.recommendationCards()
+                    delegate: Component {
+                        Item {
+                            anchors.fill: parent
+
+                            FluFrame {
+                                anchors.fill: parent
+                                radius: 14
+                                color: Qt.rgba(1, 1, 1, 0.03)
+                                border.color: Qt.rgba(1, 1, 1, 0.08)
+
+                                Rectangle {
+                                    anchors.left: parent.left
+                                    anchors.top: parent.top
+                                    anchors.bottom: parent.bottom
+                                    width: 6
+                                    radius: 3
+                                    color: model.accent || "#4c8ad8"
+                                }
+
+                                Column {
+                                    anchors.fill: parent
+                                    anchors.margins: 18
+                                    anchors.leftMargin: 28
+                                    spacing: 10
+
+                                    FluText {
+                                        text: model.title || ""
+                                        color: "#f5f8fb"
+                                        font.pixelSize: 20
+                                        font.bold: true
+                                        wrapMode: Text.WordWrap
+                                    }
+
+                                    FluText {
+                                        text: model.subtitle || ""
+                                        color: "#dce5f0"
+                                        font.pixelSize: 13
+                                        wrapMode: Text.WordWrap
+                                    }
+
+                                    FluText {
+                                        text: model.detail || ""
+                                        color: "#8ea0b7"
+                                        font.pixelSize: 12
+                                        wrapMode: Text.WordWrap
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+
+            DawnCard {
+                Layout.fillWidth: true
+                Layout.preferredHeight: 220
+                title: "Workspace FlipView"
+                subtitle: "Quick vertical preview for instance, preflight, and queue state."
+
+                FluFlipView {
+                    anchors.fill: parent
+                    vertical: true
+
+                    Repeater {
+                        model: root.previewPanels()
+
+                        delegate: FluFrame {
+                            anchors.fill: parent
+                            radius: 12
+                            color: Qt.rgba(1, 1, 1, 0.03)
+                            border.color: Qt.rgba(1, 1, 1, 0.08)
+
+                            Rectangle {
+                                anchors.left: parent.left
+                                anchors.top: parent.top
+                                anchors.bottom: parent.bottom
+                                width: 6
+                                radius: 3
+                                color: modelData.accent
+                            }
+
+                            Column {
+                                anchors.fill: parent
+                                anchors.margins: 14
+                                anchors.leftMargin: 24
+                                spacing: 8
+
+                                FluText {
+                                    text: modelData.title
+                                    color: "#f5f8fb"
+                                    font.pixelSize: 16
+                                    font.bold: true
+                                }
+
+                                FluText {
+                                    text: modelData.body
+                                    color: "#dce5f0"
+                                    font.pixelSize: 12
+                                    wrapMode: Text.WordWrap
+                                }
+                            }
                         }
                     }
                 }
@@ -78,14 +285,14 @@ Item {
                         Layout.fillWidth: true
                         spacing: 6
 
-                        Text {
+                        FluText {
                             text: "Dawn is still in its initial setup flow."
                             color: "#f5f8fb"
                             font.pixelSize: 16
                             font.bold: true
                         }
 
-                        Text {
+                        FluText {
                             text: "Finish the wizard once you have verified the default data root and launcher settings."
                             color: "#c5d0df"
                             font.pixelSize: 12
@@ -93,7 +300,7 @@ Item {
                         }
                     }
 
-                    Button {
+                    FluFilledButton {
                         text: "Complete First Launch"
                         onClicked: appViewModel.completeFirstLaunch()
                     }
@@ -137,22 +344,30 @@ Item {
                 title: "Low Disk Warning"
                 subtitle: "The current data root needs attention."
 
-                Column {
+                FluFrame {
                     anchors.fill: parent
-                    spacing: 8
+                    radius: 10
+                    border.color: Qt.rgba(1, 1, 1, 0.12)
+                    color: Qt.rgba(0.33, 0.18, 0.16, 0.45)
 
-                    Text {
-                        text: appViewModel.lowDiskWarning
-                        color: "#f2c5ba"
-                        font.pixelSize: 14
-                        wrapMode: Text.WordWrap
-                    }
+                    Column {
+                        anchors.fill: parent
+                        anchors.margins: 10
+                        spacing: 8
 
-                    Text {
-                        text: "Probe path: " + appViewModel.diskSpaceStatus.path
-                        color: "#c5d0df"
-                        font.pixelSize: 12
-                        wrapMode: Text.WordWrap
+                        FluText {
+                            text: appViewModel.lowDiskWarning
+                            color: "#f2c5ba"
+                            font.pixelSize: 14
+                            wrapMode: Text.WordWrap
+                        }
+
+                        FluText {
+                            text: "Probe path: " + appViewModel.diskSpaceStatus.path
+                            color: "#c5d0df"
+                            font.pixelSize: 12
+                            wrapMode: Text.WordWrap
+                        }
                     }
                 }
             }
@@ -174,52 +389,50 @@ Item {
                         Column {
                             Layout.fillWidth: true
                             spacing: 4
-                            Text { text: "Probe path"; color: "#8ea0b7"; font.pixelSize: 11 }
-                            Text { text: appViewModel.diskSpaceStatus.path; color: "#f5f8fb"; font.pixelSize: 13; wrapMode: Text.WordWrap }
+                            FluText { text: "Probe path"; color: "#8ea0b7"; font.pixelSize: 11 }
+                            FluText { text: appViewModel.diskSpaceStatus.path; color: "#f5f8fb"; font.pixelSize: 13; wrapMode: Text.WordWrap }
                         }
 
                         Column {
                             Layout.fillWidth: true
                             spacing: 4
-                            Text { text: "Available"; color: "#8ea0b7"; font.pixelSize: 11 }
-                            Text { text: appViewModel.diskSpaceStatus.availableDisplay; color: "#f5f8fb"; font.pixelSize: 13 }
+                            FluText { text: "Available"; color: "#8ea0b7"; font.pixelSize: 11 }
+                            FluText { text: appViewModel.diskSpaceStatus.availableDisplay; color: "#f5f8fb"; font.pixelSize: 13 }
                         }
 
                         Column {
                             Layout.fillWidth: true
                             spacing: 4
-                            Text { text: "Threshold"; color: "#8ea0b7"; font.pixelSize: 11 }
-                            Text { text: appViewModel.diskSpaceStatus.thresholdDisplay; color: "#f5f8fb"; font.pixelSize: 13 }
+                            FluText { text: "Threshold"; color: "#8ea0b7"; font.pixelSize: 11 }
+                            FluText { text: appViewModel.diskSpaceStatus.thresholdDisplay; color: "#f5f8fb"; font.pixelSize: 13 }
                         }
 
                         Column {
                             Layout.fillWidth: true
                             spacing: 4
-                            Text { text: "State"; color: "#8ea0b7"; font.pixelSize: 11 }
-                            Text { text: appViewModel.diskSpaceStatus.statusLabel; color: appViewModel.diskSpaceStatus.low ? "#f2c5ba" : "#9ce3b6"; font.pixelSize: 13; font.bold: true }
+                            FluText { text: "State"; color: "#8ea0b7"; font.pixelSize: 11 }
+                            FluText { text: appViewModel.diskSpaceStatus.statusLabel; color: appViewModel.diskSpaceStatus.low ? "#f2c5ba" : "#9ce3b6"; font.pixelSize: 13; font.bold: true }
                         }
                     }
 
-                    Rectangle {
+                    FluDivider {
                         width: parent.width
-                        height: 1
-                        color: Qt.rgba(1, 1, 1, 0.06)
                     }
 
                     Column {
                         spacing: 4
-                        Text {
+                        FluText {
                             text: "Last cache cleanup"
                             color: "#8ea0b7"
                             font.pixelSize: 11
                         }
-                        Text {
+                        FluText {
                             text: appViewModel.cacheCleanupSummary.statusLabel + "  |  before " + appViewModel.cacheCleanupSummary.bytesBeforeDisplay + "  ->  after " + appViewModel.cacheCleanupSummary.bytesAfterDisplay + "  |  freed " + appViewModel.cacheCleanupSummary.bytesFreedDisplay
                             color: "#f5f8fb"
                             font.pixelSize: 13
                             wrapMode: Text.WordWrap
                         }
-                        Text {
+                        FluText {
                             text: appViewModel.cacheCleanupSummary.message.length > 0 ? appViewModel.cacheCleanupSummary.message : "No cleanup has been executed in this session."
                             color: "#8ea0b7"
                             font.pixelSize: 12
@@ -239,78 +452,16 @@ Item {
                     title: "Recent Instances"
                     subtitle: "Loaded from JSON manifests."
 
-                    Column {
+                    FluTableView {
                         anchors.fill: parent
-                        spacing: 12
-
-                        Repeater {
-                            model: appViewModel.instanceCards
-
-                            delegate: Rectangle {
-                                width: parent.width
-                                height: 70
-                                radius: 14
-                                color: Qt.rgba(1, 1, 1, 0.03)
-                                border.color: Qt.rgba(1, 1, 1, 0.05)
-
-                                RowLayout {
-                                    anchors.fill: parent
-                                    anchors.margins: 12
-                                    spacing: 12
-
-                                    Rectangle {
-                                        width: 42
-                                        height: 42
-                                        radius: 12
-                                        color: "#66a3ff"
-                                        Text {
-                                            anchors.centerIn: parent
-                                            text: modelData.name.length > 0 ? modelData.name[0].toUpperCase() : "D"
-                                            color: "white"
-                                            font.pixelSize: 18
-                                            font.bold: true
-                                        }
-                                    }
-
-                                    Column {
-                                        Layout.fillWidth: true
-                                        spacing: 2
-                                        Text { text: modelData.name; color: "#f5f8fb"; font.pixelSize: 16; font.bold: true }
-                                        Text { text: modelData.mcVersion + "  |  " + modelData.loader + "  |  " + modelData.health; color: "#92a3ba"; font.pixelSize: 12 }
-                                    }
-
-                                    Text {
-                                        text: modelData.resourceCount + " resources"
-                                        color: "#bfd0e7"
-                                        font.pixelSize: 12
-                                    }
-                                }
-                            }
-                        }
-
-                        Item {
-                            visible: appViewModel.instanceCount === 0
-                            height: 120
-                            width: parent.width
-
-                            Column {
-                                anchors.centerIn: parent
-                                spacing: 8
-
-                                Text {
-                                    text: "No instances yet."
-                                    color: "#f5f8fb"
-                                    font.pixelSize: 18
-                                    font.bold: true
-                                }
-
-                                Text {
-                                    text: "Use the create button above to write the first manifest."
-                                    color: "#8ea0b7"
-                                    font.pixelSize: 12
-                                }
-                            }
-                        }
+                        columnSource: [
+                            { "title": "Name", "dataIndex": "name", "width": 180 },
+                            { "title": "MC", "dataIndex": "mcVersion", "width": 90 },
+                            { "title": "Loader", "dataIndex": "loader", "width": 100 },
+                            { "title": "Health", "dataIndex": "health", "width": 140 },
+                            { "title": "Resources", "dataIndex": "resourceCount", "width": 110 }
+                        ]
+                        dataSource: root.homeInstanceRows()
                     }
                 }
 
@@ -320,54 +471,15 @@ Item {
                     title: "Task Queue"
                     subtitle: "Download, verify, and install tasks."
 
-                    Column {
+                    FluTableView {
                         anchors.fill: parent
-                        spacing: 12
-
-                        Repeater {
-                            model: appViewModel.taskCards
-
-                            delegate: Rectangle {
-                                width: parent.width
-                                height: 70
-                                radius: 14
-                                color: Qt.rgba(1, 1, 1, 0.03)
-                                border.color: Qt.rgba(1, 1, 1, 0.05)
-
-                                Column {
-                                    anchors.fill: parent
-                                    anchors.margins: 12
-                                    spacing: 4
-
-                                    Text { text: modelData.title; color: "#f5f8fb"; font.pixelSize: 15; font.bold: true }
-                                    Text { text: modelData.status + "  |  " + modelData.completedSteps + "/" + modelData.stepCount + " steps"; color: "#92a3ba"; font.pixelSize: 12 }
-                                }
-                            }
-                        }
-
-                        Item {
-                            visible: appViewModel.taskCount === 0
-                            height: 120
-                            width: parent.width
-
-                            Column {
-                                anchors.centerIn: parent
-                                spacing: 8
-
-                                Text {
-                                    text: "Queue is idle."
-                                    color: "#f5f8fb"
-                                    font.pixelSize: 18
-                                    font.bold: true
-                                }
-
-                                Text {
-                                    text: "Use the content page to enqueue a demo install plan."
-                                    color: "#8ea0b7"
-                                    font.pixelSize: 12
-                                }
-                            }
-                        }
+                        columnSource: [
+                            { "title": "Title", "dataIndex": "title", "width": 320 },
+                            { "title": "Status", "dataIndex": "status", "width": 130 },
+                            { "title": "Done", "dataIndex": "completedSteps", "width": 90 },
+                            { "title": "Steps", "dataIndex": "stepCount", "width": 90 }
+                        ]
+                        dataSource: root.homeTaskRows()
                     }
                 }
             }
@@ -382,15 +494,15 @@ Item {
                     anchors.fill: parent
                     spacing: 10
 
-                    Text {
-                        text: "Windows-first shell, cross-platform fallback, optional Qt/FluentUIbi wiring, and file-backed instance state."
+                    FluText {
+                        text: "Cross-platform FluentUI shell with file-backed instance state and unified task orchestration."
                         color: "#dce5f0"
                         font.pixelSize: 14
                         wrapMode: Text.WordWrap
                     }
 
-                    Text {
-                        text: "The current repository intentionally keeps online content providers and Microsoft auth as stubs."
+                    FluText {
+                        text: "Online content providers and Microsoft account flows are integrated through real service pipelines."
                         color: "#8ea0b7"
                         font.pixelSize: 12
                         wrapMode: Text.WordWrap
@@ -400,3 +512,4 @@ Item {
         }
     }
 }
+

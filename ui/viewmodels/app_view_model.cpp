@@ -3,13 +3,18 @@
 #include "dawn/core/model/instance_workbench.h"
 #include "dawn/core/local/local_package_service.h"
 #include "dawn/core/provider/modrinth_provider.h"
+#include "dawn/infra/fs/file_system.h"
 #include "dawn/infra/net/http_client.h"
 
 #include <algorithm>
 #include <cstdint>
 #include <filesystem>
 #include <iterator>
+#include <QDate>
 #include <QDateTime>
+#include <QDesktopServices>
+#include <QTime>
+#include <QUrl>
 #include <memory>
 #include <system_error>
 #include <utility>
@@ -77,6 +82,73 @@ QVariantList loaders_to_variant_list(const std::vector<dawn::core::LoaderType>& 
     return list;
 }
 
+QVariantList regular_files_to_variant(const std::filesystem::path& folder, bool detectDisabledSuffix) {
+    QVariantList files;
+    std::error_code ec;
+    if (!std::filesystem::exists(folder, ec) || !std::filesystem::is_directory(folder, ec)) {
+        return files;
+    }
+
+    std::vector<std::filesystem::directory_entry> entries;
+    for (const auto& entry : std::filesystem::directory_iterator(folder, ec)) {
+        if (ec) {
+            break;
+        }
+        if (entry.is_regular_file()) {
+            entries.push_back(entry);
+        }
+    }
+    std::sort(entries.begin(), entries.end(), [](const auto& left, const auto& right) {
+        return left.path().filename().generic_string() < right.path().filename().generic_string();
+    });
+
+    for (const auto& entry : entries) {
+        const auto size = dawn::infra::fs::file_size(entry.path(), nullptr);
+        const auto name = entry.path().filename().generic_string();
+        const auto disabled = detectDisabledSuffix
+            && name.size() > std::string(".disabled").size()
+            && name.rfind(".disabled") == name.size() - std::string(".disabled").size();
+        files.push_back(QVariantMap{
+            {"name", to_qstring(name)},
+            {"path", to_qstring(entry.path().generic_string())},
+            {"size", QVariant::fromValue<qulonglong>(static_cast<qulonglong>(size))},
+            {"sizeDisplay", format_bytes(size)},
+            {"enabled", !disabled},
+            {"status", disabled ? QStringLiteral("Disabled") : QStringLiteral("Enabled")},
+        });
+    }
+    return files;
+}
+
+QVariantList directories_to_variant(const std::filesystem::path& folder) {
+    QVariantList dirs;
+    std::error_code ec;
+    if (!std::filesystem::exists(folder, ec) || !std::filesystem::is_directory(folder, ec)) {
+        return dirs;
+    }
+
+    std::vector<std::filesystem::directory_entry> entries;
+    for (const auto& entry : std::filesystem::directory_iterator(folder, ec)) {
+        if (ec) {
+            break;
+        }
+        if (entry.is_directory()) {
+            entries.push_back(entry);
+        }
+    }
+    std::sort(entries.begin(), entries.end(), [](const auto& left, const auto& right) {
+        return left.path().filename().generic_string() < right.path().filename().generic_string();
+    });
+
+    for (const auto& entry : entries) {
+        dirs.push_back(QVariantMap{
+            {"name", to_qstring(entry.path().filename().generic_string())},
+            {"path", to_qstring(entry.path().generic_string())},
+        });
+    }
+    return dirs;
+}
+
 QString format_bytes(std::uintmax_t bytes) {
     static constexpr const char* kUnits[] = {"B", "KiB", "MiB", "GiB", "TiB"};
     double value = static_cast<double>(bytes);
@@ -103,6 +175,34 @@ QString java_strategy_text(dawn::core::JavaStrategy strategy) {
         return QStringLiteral("downloaded");
     }
     return QStringLiteral("auto");
+}
+
+QString backup_strategy_text(dawn::core::BackupStrategy strategy) {
+    switch (strategy) {
+    case dawn::core::BackupStrategy::Manual:
+        return QStringLiteral("manual");
+    case dawn::core::BackupStrategy::BeforeLaunch:
+        return QStringLiteral("before-launch");
+    case dawn::core::BackupStrategy::BeforeUpdate:
+        return QStringLiteral("before-update");
+    case dawn::core::BackupStrategy::Scheduled:
+        return QStringLiteral("scheduled");
+    }
+    return QStringLiteral("before-update");
+}
+
+dawn::core::BackupStrategy backup_strategy_from_text(const QString& strategy) {
+    const auto normalized = strategy.trimmed().toLower();
+    if (normalized == QStringLiteral("manual")) {
+        return dawn::core::BackupStrategy::Manual;
+    }
+    if (normalized == QStringLiteral("before-launch")) {
+        return dawn::core::BackupStrategy::BeforeLaunch;
+    }
+    if (normalized == QStringLiteral("scheduled")) {
+        return dawn::core::BackupStrategy::Scheduled;
+    }
+    return dawn::core::BackupStrategy::BeforeUpdate;
 }
 
 QString content_install_status_text(dawn::core::ContentInstallStatus status) {
@@ -165,6 +265,40 @@ int page_index_for_hint(const QString& pageHint) {
         return 4;
     }
     return -1;
+}
+
+bool is_togglable_asset_type(const QString& assetType) {
+    const auto type = assetType.trimmed().toLower();
+    return type == QStringLiteral("mods")
+        || type == QStringLiteral("resourcepacks")
+        || type == QStringLiteral("shaderpacks");
+}
+
+bool is_supported_asset_type(const QString& assetType) {
+    const auto type = assetType.trimmed().toLower();
+    return is_togglable_asset_type(type)
+        || type == QStringLiteral("logs")
+        || type == QStringLiteral("worlds");
+}
+
+std::filesystem::path asset_directory_path(const std::filesystem::path& gameDir, const QString& assetType) {
+    const auto type = assetType.trimmed().toLower();
+    if (type == QStringLiteral("mods")) {
+        return gameDir / "mods";
+    }
+    if (type == QStringLiteral("resourcepacks")) {
+        return gameDir / "resourcepacks";
+    }
+    if (type == QStringLiteral("shaderpacks")) {
+        return gameDir / "shaderpacks";
+    }
+    if (type == QStringLiteral("logs")) {
+        return gameDir / "logs";
+    }
+    if (type == QStringLiteral("worlds")) {
+        return gameDir / "saves";
+    }
+    return {};
 }
 
 } // namespace
@@ -243,6 +377,46 @@ QVariantMap AppViewModel::activeInstanceWorkbench() const {
         return workbenchToVariant(dawn::core::build_instance_workbench(instances_[index]));
     }
     return workbenchToVariant(dawn::core::build_instance_workbench(instances_.front()));
+}
+
+QVariantMap AppViewModel::activeInstanceAssets() const {
+    if (instances_.empty()) {
+        return QVariantMap{
+            {"runtime", QVariantMap{}},
+            {"mods", QVariantList{}},
+            {"resourcepacks", QVariantList{}},
+            {"shaderpacks", QVariantList{}},
+            {"worlds", QVariantList{}},
+            {"logs", QVariantList{}},
+        };
+    }
+
+    const auto index = activeInstanceIndex();
+    const auto& manifest = index < instances_.size() ? instances_[index] : instances_.front();
+    const std::filesystem::path gameDir = manifest.gameDir;
+    const auto mods = regular_files_to_variant(gameDir / "mods", true);
+    const auto resourcepacks = regular_files_to_variant(gameDir / "resourcepacks", true);
+    const auto shaderpacks = regular_files_to_variant(gameDir / "shaderpacks", true);
+    const auto worlds = directories_to_variant(gameDir / "saves");
+    const auto logs = regular_files_to_variant(gameDir / "logs", false);
+
+    return QVariantMap{
+        {"runtime", QVariantMap{
+            {"instanceId", to_qstring(manifest.id)},
+            {"instanceName", to_qstring(manifest.name)},
+            {"mcVersion", to_qstring(manifest.mcVersion)},
+            {"loader", loader_text(manifest.loaderType)},
+            {"loaderVersion", to_qstring(manifest.loaderVersion)},
+            {"javaProfileId", to_qstring(manifest.javaProfileId)},
+            {"memoryProfile", to_qstring(manifest.memoryProfile)},
+            {"gameDir", to_qstring(gameDir.generic_string())},
+        }},
+        {"mods", mods},
+        {"resourcepacks", resourcepacks},
+        {"shaderpacks", shaderpacks},
+        {"worlds", worlds},
+        {"logs", logs},
+    };
 }
 
 QVariantMap AppViewModel::primaryPreflight() const {
@@ -452,6 +626,18 @@ QString AppViewModel::javaStrategy() const {
     return java_strategy_text(settings_.javaStrategy);
 }
 
+QString AppViewModel::backupStrategy() const {
+    return backup_strategy_text(settings_.backupStrategy);
+}
+
+QString AppViewModel::backupScheduleDate() const {
+    return to_qstring(settings_.backupScheduleDate);
+}
+
+QString AppViewModel::backupScheduleTime() const {
+    return to_qstring(settings_.backupScheduleTime);
+}
+
 QString AppViewModel::cachePath() const {
     const auto path = settings_.cachePath.empty() ? settingsService_.defaults().cachePath : settings_.cachePath;
     return to_qstring(path.generic_string());
@@ -483,6 +669,18 @@ QString AppViewModel::selectedContentVersionId() const {
 
 QString AppViewModel::selectedTargetInstanceId() const {
     return activeInstanceId();
+}
+
+bool AppViewModel::autoCreatedInstanceNoticeVisible() const {
+    return !autoCreatedInstanceId_.isEmpty() && !autoCreatedInstanceNoticeText_.isEmpty();
+}
+
+QString AppViewModel::autoCreatedInstanceNoticeText() const {
+    return autoCreatedInstanceNoticeText_;
+}
+
+QString AppViewModel::autoCreatedInstanceId() const {
+    return autoCreatedInstanceId_;
 }
 
 QString AppViewModel::primaryInstanceId() const {
@@ -517,8 +715,8 @@ bool AppViewModel::createInstance(const QString& name, const QString& mcVersion,
     manifest.name = to_std(name);
     manifest.mcVersion = to_std(mcVersion);
     manifest.loaderType = dawn::core::loader_type_from_string(to_std(loaderType));
-    manifest.loaderVersion = manifest.loaderType == dawn::core::LoaderType::None ? std::string() : "stub";
-    manifest.optifineVersion = manifest.loaderType == dawn::core::LoaderType::OptiFine ? "stub" : std::string();
+    manifest.loaderVersion = manifest.loaderType == dawn::core::LoaderType::None ? std::string() : "latest";
+    manifest.optifineVersion = manifest.loaderType == dawn::core::LoaderType::OptiFine ? "latest" : std::string();
     manifest.memoryProfile = "2G";
     manifest.javaProfileId = "default-java";
     manifest.themeColor = "#66a3ff";
@@ -627,18 +825,25 @@ bool AppViewModel::installSelectedContent() {
     }
 
     const auto result = contentInstallService_.install(*request, *contentProvider_, &taskQueue_);
+    const auto effectiveInstanceId = result.installedInstanceId.empty() ? request->instanceId : result.installedInstanceId;
     contentInstallStatus_ = to_qstring(result.message.empty() ? (result.success ? "Content install completed" : "Content install failed") : result.message);
     installDiagnostics_ = result.diagnostics;
     rollbackEvents_ = result.rollbackEvents;
     repairExecutionLogs_ = result.logs;
     if (result.success) {
+        refresh();
+        setActiveInstance(to_qstring(effectiveInstanceId));
+        if (result.requiresNewInstance || effectiveInstanceId != request->instanceId) {
+            setAutoCreatedInstanceNotice(to_qstring(effectiveInstanceId), QStringLiteral("remote modpack"));
+            emit navigateToPageRequested(1);
+        }
         refreshInstallPreview(false);
     }
 
     recordInstallLog(
         QStringLiteral("remote-install"),
         QStringLiteral("remote_content"),
-        to_qstring(request->instanceId),
+        to_qstring(effectiveInstanceId),
         result.success,
         contentInstallStatus_,
         result.success ? QStringLiteral("success") : QStringLiteral("failed"),
@@ -818,6 +1023,25 @@ bool AppViewModel::navigateToEventContext() {
     return true;
 }
 
+void AppViewModel::clearAutoCreatedInstanceNotice() {
+    if (autoCreatedInstanceId_.isEmpty() && autoCreatedInstanceNoticeText_.isEmpty()) {
+        return;
+    }
+    autoCreatedInstanceId_.clear();
+    autoCreatedInstanceNoticeText_.clear();
+    emit dataChanged();
+}
+
+bool AppViewModel::openAutoCreatedInstance() {
+    if (autoCreatedInstanceId_.isEmpty()) {
+        return false;
+    }
+    setActiveInstance(autoCreatedInstanceId_);
+    setActiveInstanceTab(QStringLiteral("overview"));
+    emit navigateToPageRequested(1);
+    return true;
+}
+
 bool AppViewModel::nextWizardStep() {
     if (settings_.firstLaunchCompleted) {
         return false;
@@ -955,6 +1179,7 @@ QVariantMap AppViewModel::handleDroppedFile(const QString& path, const QString& 
     }
 
     const auto installResult = contentInstallService_.install_local_file(sourcePath, to_std(resolvedInstanceId), &taskQueue_);
+    const auto effectiveInstanceId = installResult.installedInstanceId.empty() ? to_std(resolvedInstanceId) : installResult.installedInstanceId;
     QVariantList logs;
     for (const auto& log : installResult.logs) {
         logs.push_back(to_qstring(log));
@@ -973,6 +1198,8 @@ QVariantMap AppViewModel::handleDroppedFile(const QString& path, const QString& 
     result.insert("message", to_qstring(installResult.message));
     result.insert("failureReason", installResult.success ? QString() : to_qstring(installResult.message));
     result.insert("requiresNewInstance", installResult.requiresNewInstance);
+    result.insert("targetInstanceId", to_qstring(effectiveInstanceId));
+    result.insert("installedInstanceId", to_qstring(effectiveInstanceId));
     result.insert("deployedPath", to_qstring(installResult.deployedPath.generic_string()));
     result.insert("lockPath", to_qstring(installResult.lockPath.generic_string()));
     result.insert("logs", logs);
@@ -989,10 +1216,19 @@ QVariantMap AppViewModel::handleDroppedFile(const QString& path, const QString& 
     recordInstallLog(
         QStringLiteral("drag-install"),
         QStringLiteral("local_drop"),
-        resolvedInstanceId,
+        to_qstring(effectiveInstanceId),
         installResult.success,
         installResult.message.empty() ? result.value("detectedType").toString() : to_qstring(installResult.message),
         result.value("status").toString());
+
+    if (installResult.success && !effectiveInstanceId.empty()) {
+        refresh();
+        setActiveInstance(to_qstring(effectiveInstanceId));
+        if (installResult.requiresNewInstance || effectiveInstanceId != to_std(resolvedInstanceId)) {
+            setAutoCreatedInstanceNotice(to_qstring(effectiveInstanceId), QStringLiteral("local modpack"));
+            emit navigateToPageRequested(1);
+        }
+    }
 
     lastDroppedFileResult_ = result;
     emit dataChanged();
@@ -1024,6 +1260,64 @@ void AppViewModel::setJavaStrategy(const QString& strategy) {
     persistSettings();
 }
 
+void AppViewModel::setBackupStrategy(const QString& strategy) {
+    const auto parsed = backup_strategy_from_text(strategy);
+    if (settings_.backupStrategy == parsed) {
+        return;
+    }
+
+    settings_.backupStrategy = parsed;
+    persistSettings();
+}
+
+void AppViewModel::setBackupScheduleDate(const QString& date) {
+    if (date.trimmed().isEmpty()) {
+        if (settings_.backupScheduleDate.empty()) {
+            return;
+        }
+        settings_.backupScheduleDate.clear();
+        persistSettings();
+        return;
+    }
+
+    const auto parsed = QDate::fromString(date, Qt::ISODate);
+    if (!parsed.isValid()) {
+        return;
+    }
+
+    const auto normalized = parsed.toString(Qt::ISODate);
+    if (to_qstring(settings_.backupScheduleDate) == normalized) {
+        return;
+    }
+
+    settings_.backupScheduleDate = to_std(normalized);
+    persistSettings();
+}
+
+void AppViewModel::setBackupScheduleTime(const QString& time) {
+    if (time.trimmed().isEmpty()) {
+        if (settings_.backupScheduleTime.empty()) {
+            return;
+        }
+        settings_.backupScheduleTime.clear();
+        persistSettings();
+        return;
+    }
+
+    const auto parsed = QTime::fromString(time, QStringLiteral("HH:mm"));
+    if (!parsed.isValid()) {
+        return;
+    }
+
+    const auto normalized = parsed.toString(QStringLiteral("HH:mm"));
+    if (to_qstring(settings_.backupScheduleTime) == normalized) {
+        return;
+    }
+
+    settings_.backupScheduleTime = to_std(normalized);
+    persistSettings();
+}
+
 void AppViewModel::setLowDiskThresholdGb(int thresholdGb) {
     const auto clamped = std::max(0, thresholdGb);
     if (settings_.lowDiskThresholdGb == clamped) {
@@ -1044,6 +1338,274 @@ bool AppViewModel::clearCache() {
     refreshDiskStatus();
     emit dataChanged();
     return cacheCleanupSummary_.success;
+}
+
+bool AppViewModel::toggleAssetEnabled(const QString& assetType, const QString& assetPath, bool enabled) {
+    const auto normalizedType = assetType.trimmed().toLower();
+    if (normalizedType != QStringLiteral("mods")
+        && normalizedType != QStringLiteral("resourcepacks")
+        && normalizedType != QStringLiteral("shaderpacks")) {
+        recordInstallLog(
+            QStringLiteral("asset-toggle"),
+            QStringLiteral("instance_asset"),
+            activeInstanceId(),
+            false,
+            QStringLiteral("Unsupported asset type: %1").arg(assetType),
+            QStringLiteral("invalid-type"));
+        return false;
+    }
+
+    if (assetPath.trimmed().isEmpty()) {
+        recordInstallLog(
+            QStringLiteral("asset-toggle"),
+            QStringLiteral("instance_asset"),
+            activeInstanceId(),
+            false,
+            QStringLiteral("Asset path is empty"),
+            QStringLiteral("invalid-path"));
+        return false;
+    }
+
+    const std::filesystem::path path = to_std(assetPath);
+    std::error_code ec;
+    if (!std::filesystem::exists(path, ec) || !std::filesystem::is_regular_file(path, ec)) {
+        recordInstallLog(
+            QStringLiteral("asset-toggle"),
+            QStringLiteral("instance_asset"),
+            activeInstanceId(),
+            false,
+            QStringLiteral("Asset not found: %1").arg(assetPath),
+            QStringLiteral("missing-asset"));
+        return false;
+    }
+
+    const auto filename = path.filename().generic_string();
+    const auto suffix = std::string(".disabled");
+    const auto hasSuffix = filename.size() > suffix.size() && filename.rfind(suffix) == filename.size() - suffix.size();
+
+    std::filesystem::path targetPath = path;
+    if (enabled) {
+        if (!hasSuffix) {
+            recordInstallLog(
+                QStringLiteral("asset-toggle"),
+                QStringLiteral("instance_asset"),
+                activeInstanceId(),
+                true,
+                QStringLiteral("Asset already enabled: %1").arg(assetPath),
+                QStringLiteral("no-op"));
+            return true;
+        }
+        const auto restoredName = filename.substr(0, filename.size() - suffix.size());
+        targetPath = path.parent_path() / restoredName;
+    } else {
+        if (hasSuffix) {
+            recordInstallLog(
+                QStringLiteral("asset-toggle"),
+                QStringLiteral("instance_asset"),
+                activeInstanceId(),
+                true,
+                QStringLiteral("Asset already disabled: %1").arg(assetPath),
+                QStringLiteral("no-op"));
+            return true;
+        }
+        targetPath = path.parent_path() / (filename + suffix);
+    }
+
+    std::filesystem::rename(path, targetPath, ec);
+    if (ec) {
+        recordInstallLog(
+            QStringLiteral("asset-toggle"),
+            QStringLiteral("instance_asset"),
+            activeInstanceId(),
+            false,
+            QStringLiteral("Failed to toggle asset: %1").arg(assetPath),
+            QStringLiteral("rename-failed"));
+        return false;
+    }
+
+    recordInstallLog(
+        QStringLiteral("asset-toggle"),
+        QStringLiteral("instance_asset"),
+        activeInstanceId(),
+        true,
+        QStringLiteral("%1 asset: %2").arg(enabled ? QStringLiteral("Enabled") : QStringLiteral("Disabled"), assetPath),
+        enabled ? QStringLiteral("asset-enabled") : QStringLiteral("asset-disabled"));
+    refresh();
+    return true;
+}
+
+bool AppViewModel::removeAsset(const QString& assetPath) {
+    if (assetPath.trimmed().isEmpty()) {
+        recordInstallLog(
+            QStringLiteral("asset-remove"),
+            QStringLiteral("instance_asset"),
+            activeInstanceId(),
+            false,
+            QStringLiteral("Asset path is empty"),
+            QStringLiteral("invalid-path"));
+        return false;
+    }
+
+    const std::filesystem::path path = to_std(assetPath);
+    std::error_code ec;
+    if (!std::filesystem::exists(path, ec)) {
+        recordInstallLog(
+            QStringLiteral("asset-remove"),
+            QStringLiteral("instance_asset"),
+            activeInstanceId(),
+            true,
+            QStringLiteral("Asset already removed: %1").arg(assetPath),
+            QStringLiteral("no-op"));
+        return true;
+    }
+
+    if (std::filesystem::is_directory(path, ec)) {
+        std::filesystem::remove_all(path, ec);
+    } else {
+        std::filesystem::remove(path, ec);
+    }
+    if (ec) {
+        recordInstallLog(
+            QStringLiteral("asset-remove"),
+            QStringLiteral("instance_asset"),
+            activeInstanceId(),
+            false,
+            QStringLiteral("Failed to remove asset: %1").arg(assetPath),
+            QStringLiteral("remove-failed"));
+        return false;
+    }
+
+    recordInstallLog(
+        QStringLiteral("asset-remove"),
+        QStringLiteral("instance_asset"),
+        activeInstanceId(),
+        true,
+        QStringLiteral("Removed asset: %1").arg(assetPath),
+        QStringLiteral("asset-removed"));
+    refresh();
+    return true;
+}
+
+bool AppViewModel::openPath(const QString& path) {
+    if (path.trimmed().isEmpty()) {
+        recordInstallLog(
+            QStringLiteral("asset-open"),
+            QStringLiteral("instance_asset"),
+            activeInstanceId(),
+            false,
+            QStringLiteral("Path is empty"),
+            QStringLiteral("invalid-path"));
+        return false;
+    }
+    const bool opened = QDesktopServices::openUrl(QUrl::fromLocalFile(path));
+    recordInstallLog(
+        QStringLiteral("asset-open"),
+        QStringLiteral("instance_asset"),
+        activeInstanceId(),
+        opened,
+        opened ? QStringLiteral("Opened path: %1").arg(path) : QStringLiteral("Failed to open path: %1").arg(path),
+        opened ? QStringLiteral("path-opened") : QStringLiteral("open-failed"));
+    return opened;
+}
+
+int AppViewModel::setAllAssetsEnabled(const QString& assetType, bool enabled) {
+    if (!is_togglable_asset_type(assetType)) {
+        return 0;
+    }
+    if (instances_.empty()) {
+        return 0;
+    }
+
+    const auto index = activeInstanceIndex();
+    if (index >= instances_.size()) {
+        return 0;
+    }
+    const auto folder = asset_directory_path(instances_[index].gameDir, assetType);
+    std::error_code ec;
+    if (folder.empty() || !std::filesystem::exists(folder, ec) || !std::filesystem::is_directory(folder, ec)) {
+        return 0;
+    }
+
+    int changed = 0;
+    for (const auto& entry : std::filesystem::directory_iterator(folder, ec)) {
+        if (ec || !entry.is_regular_file()) {
+            continue;
+        }
+        if (toggleAssetEnabled(assetType, to_qstring(entry.path().generic_string()), enabled)) {
+            ++changed;
+        }
+    }
+    refresh();
+    return changed;
+}
+
+int AppViewModel::removeDisabledAssets(const QString& assetType) {
+    if (!is_togglable_asset_type(assetType)) {
+        return 0;
+    }
+    if (instances_.empty()) {
+        return 0;
+    }
+
+    const auto index = activeInstanceIndex();
+    if (index >= instances_.size()) {
+        return 0;
+    }
+    const auto folder = asset_directory_path(instances_[index].gameDir, assetType);
+    std::error_code ec;
+    if (folder.empty() || !std::filesystem::exists(folder, ec) || !std::filesystem::is_directory(folder, ec)) {
+        return 0;
+    }
+
+    constexpr auto kDisabledSuffix = ".disabled";
+    int removed = 0;
+    for (const auto& entry : std::filesystem::directory_iterator(folder, ec)) {
+        if (ec || !entry.is_regular_file()) {
+            continue;
+        }
+        const auto name = entry.path().filename().generic_string();
+        const auto hasSuffix = name.size() > std::string(kDisabledSuffix).size()
+            && name.rfind(kDisabledSuffix) == name.size() - std::string(kDisabledSuffix).size();
+        if (!hasSuffix) {
+            continue;
+        }
+        if (removeAsset(to_qstring(entry.path().generic_string()))) {
+            ++removed;
+        }
+    }
+    refresh();
+    return removed;
+}
+
+int AppViewModel::removeAllAssets(const QString& assetType) {
+    if (!is_supported_asset_type(assetType)) {
+        return 0;
+    }
+    if (instances_.empty()) {
+        return 0;
+    }
+
+    const auto index = activeInstanceIndex();
+    if (index >= instances_.size()) {
+        return 0;
+    }
+    const auto folder = asset_directory_path(instances_[index].gameDir, assetType);
+    std::error_code ec;
+    if (folder.empty() || !std::filesystem::exists(folder, ec) || !std::filesystem::is_directory(folder, ec)) {
+        return 0;
+    }
+
+    int removed = 0;
+    for (const auto& entry : std::filesystem::directory_iterator(folder, ec)) {
+        if (ec) {
+            continue;
+        }
+        if (removeAsset(to_qstring(entry.path().generic_string()))) {
+            ++removed;
+        }
+    }
+    refresh();
+    return removed;
 }
 
 void AppViewModel::updateSelectedContentPreview() {
@@ -1098,6 +1660,15 @@ void AppViewModel::refreshDiskStatus() {
     if (!error.empty() && diskSpaceStatus_.message.empty()) {
         diskSpaceStatus_.message = error;
     }
+}
+
+void AppViewModel::setAutoCreatedInstanceNotice(const QString& instanceId, const QString& sourceLabel) {
+    if (instanceId.isEmpty()) {
+        return;
+    }
+    autoCreatedInstanceId_ = instanceId;
+    const auto label = sourceLabel.isEmpty() ? QStringLiteral("modpack") : sourceLabel;
+    autoCreatedInstanceNoticeText_ = QStringLiteral("Installed %1 into new instance: %2").arg(label, instanceId);
 }
 
 void AppViewModel::recordInstallLog(const QString& type, const QString& sourceType, const QString& targetInstanceId, bool success, const QString& summary, const QString& result, const QString& projectId, const QString& versionId) {
@@ -1188,6 +1759,15 @@ void AppViewModel::refresh() {
     } else if (activeInstanceId_.isEmpty() || activeInstanceIndex() >= instances_.size()) {
         activeInstanceId_ = to_qstring(instances_.front().id);
         activeInstanceTabId_ = QStringLiteral("overview");
+    }
+    if (!autoCreatedInstanceId_.isEmpty()) {
+        const auto it = std::find_if(instances_.begin(), instances_.end(), [&](const dawn::core::InstanceManifest& manifest) {
+            return to_qstring(manifest.id) == autoCreatedInstanceId_;
+        });
+        if (it == instances_.end()) {
+            autoCreatedInstanceId_.clear();
+            autoCreatedInstanceNoticeText_.clear();
+        }
     }
     refreshInstallPreview(false);
     refreshDiskStatus();

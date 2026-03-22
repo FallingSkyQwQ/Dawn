@@ -1,5 +1,5 @@
 import QtQuick
-import QtQuick.Controls
+import FluentUI 1.0
 
 Rectangle {
     id: root
@@ -19,7 +19,7 @@ Rectangle {
         anchors.margins: 16
         spacing: 8
 
-        Text {
+        FluText {
             text: root.title
             color: "#9eb0c7"
             font.pixelSize: 12
@@ -27,14 +27,14 @@ Rectangle {
             font.capitalization: Font.AllUppercase
         }
 
-        Text {
+        FluText {
             text: String(root.value)
             color: "#f5f8fb"
             font.pixelSize: 28
             font.bold: true
         }
 
-        Text {
+        FluText {
             text: root.hint
             color: "#7f91a8"
             font.pixelSize: 12

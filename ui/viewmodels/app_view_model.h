@@ -34,6 +34,7 @@ class AppViewModel final : public QObject {
     Q_PROPERTY(QVariantList contentVersions READ contentVersions NOTIFY dataChanged)
     Q_PROPERTY(QVariantList instanceWorkbenchTabs READ instanceWorkbenchTabs NOTIFY dataChanged)
     Q_PROPERTY(QVariantMap activeInstanceWorkbench READ activeInstanceWorkbench NOTIFY dataChanged)
+    Q_PROPERTY(QVariantMap activeInstanceAssets READ activeInstanceAssets NOTIFY dataChanged)
     Q_PROPERTY(QVariantMap primaryPreflight READ primaryPreflight NOTIFY dataChanged)
     Q_PROPERTY(QVariantMap installPreview READ installPreview NOTIFY dataChanged)
     Q_PROPERTY(QVariantList installDiagnostics READ installDiagnostics NOTIFY dataChanged)
@@ -59,6 +60,9 @@ class AppViewModel final : public QObject {
     Q_PROPERTY(bool firstLaunchVisible READ firstLaunchVisible NOTIFY dataChanged)
     Q_PROPERTY(QString uiMode READ uiMode WRITE setUiMode NOTIFY dataChanged)
     Q_PROPERTY(QString javaStrategy READ javaStrategy NOTIFY dataChanged)
+    Q_PROPERTY(QString backupStrategy READ backupStrategy NOTIFY dataChanged)
+    Q_PROPERTY(QString backupScheduleDate READ backupScheduleDate NOTIFY dataChanged)
+    Q_PROPERTY(QString backupScheduleTime READ backupScheduleTime NOTIFY dataChanged)
     Q_PROPERTY(QString cachePath READ cachePath NOTIFY dataChanged)
     Q_PROPERTY(int lowDiskThresholdGb READ lowDiskThresholdGb WRITE setLowDiskThresholdGb NOTIFY dataChanged)
     Q_PROPERTY(QString lowDiskWarning READ lowDiskWarning NOTIFY dataChanged)
@@ -67,6 +71,9 @@ class AppViewModel final : public QObject {
     Q_PROPERTY(QString selectedContentProjectId READ selectedContentProjectId NOTIFY dataChanged)
     Q_PROPERTY(QString selectedContentVersionId READ selectedContentVersionId NOTIFY dataChanged)
     Q_PROPERTY(QString selectedTargetInstanceId READ selectedTargetInstanceId NOTIFY dataChanged)
+    Q_PROPERTY(bool autoCreatedInstanceNoticeVisible READ autoCreatedInstanceNoticeVisible NOTIFY dataChanged)
+    Q_PROPERTY(QString autoCreatedInstanceNoticeText READ autoCreatedInstanceNoticeText NOTIFY dataChanged)
+    Q_PROPERTY(QString autoCreatedInstanceId READ autoCreatedInstanceId NOTIFY dataChanged)
     Q_PROPERTY(QString primaryInstanceId READ primaryInstanceId NOTIFY dataChanged)
     Q_PROPERTY(QString activeInstanceId READ activeInstanceId NOTIFY dataChanged)
     Q_PROPERTY(QString activeInstanceTabId READ activeInstanceTabId NOTIFY dataChanged)
@@ -85,6 +92,7 @@ public:
     [[nodiscard]] QVariantList contentVersions() const;
     [[nodiscard]] QVariantList instanceWorkbenchTabs() const;
     [[nodiscard]] QVariantMap activeInstanceWorkbench() const;
+    [[nodiscard]] QVariantMap activeInstanceAssets() const;
     [[nodiscard]] QVariantMap primaryPreflight() const;
     [[nodiscard]] QVariantMap installPreview() const;
     [[nodiscard]] QVariantList installDiagnostics() const;
@@ -110,6 +118,9 @@ public:
     [[nodiscard]] bool firstLaunchVisible() const;
     [[nodiscard]] QString uiMode() const;
     [[nodiscard]] QString javaStrategy() const;
+    [[nodiscard]] QString backupStrategy() const;
+    [[nodiscard]] QString backupScheduleDate() const;
+    [[nodiscard]] QString backupScheduleTime() const;
     [[nodiscard]] QString cachePath() const;
     [[nodiscard]] int lowDiskThresholdGb() const;
     [[nodiscard]] QString lowDiskWarning() const;
@@ -118,6 +129,9 @@ public:
     [[nodiscard]] QString selectedContentProjectId() const;
     [[nodiscard]] QString selectedContentVersionId() const;
     [[nodiscard]] QString selectedTargetInstanceId() const;
+    [[nodiscard]] bool autoCreatedInstanceNoticeVisible() const;
+    [[nodiscard]] QString autoCreatedInstanceNoticeText() const;
+    [[nodiscard]] QString autoCreatedInstanceId() const;
     [[nodiscard]] QString primaryInstanceId() const;
     [[nodiscard]] QString activeInstanceId() const;
     [[nodiscard]] QString activeInstanceTabId() const;
@@ -147,11 +161,22 @@ public:
     Q_INVOKABLE QVariantMap handleDroppedFile(const QString& path, const QString& instanceId);
     Q_INVOKABLE void setUiMode(const QString& mode);
     Q_INVOKABLE void setJavaStrategy(const QString& strategy);
+    Q_INVOKABLE void setBackupStrategy(const QString& strategy);
+    Q_INVOKABLE void setBackupScheduleDate(const QString& date);
+    Q_INVOKABLE void setBackupScheduleTime(const QString& time);
     Q_INVOKABLE void setLowDiskThresholdGb(int thresholdGb);
     Q_INVOKABLE bool clearCache();
+    Q_INVOKABLE bool toggleAssetEnabled(const QString& assetType, const QString& assetPath, bool enabled);
+    Q_INVOKABLE bool removeAsset(const QString& assetPath);
+    Q_INVOKABLE int setAllAssetsEnabled(const QString& assetType, bool enabled);
+    Q_INVOKABLE int removeDisabledAssets(const QString& assetType);
+    Q_INVOKABLE int removeAllAssets(const QString& assetType);
+    Q_INVOKABLE bool openPath(const QString& path);
     Q_INVOKABLE QVariantMap preflightFor(const QString& instanceId) const;
     Q_INVOKABLE void setActiveInstance(const QString& instanceId);
     Q_INVOKABLE void setActiveInstanceTab(const QString& tabId);
+    Q_INVOKABLE void clearAutoCreatedInstanceNotice();
+    Q_INVOKABLE bool openAutoCreatedInstance();
     Q_INVOKABLE void refresh();
 
 signals:
@@ -182,6 +207,7 @@ private:
     void refreshSettingsState();
     void persistSettings();
     void refreshDiskStatus();
+    void setAutoCreatedInstanceNotice(const QString& instanceId, const QString& sourceLabel);
     void updateSelectedContentPreview();
     void refreshInstallPreview(bool recordDiagnosticEvent);
     void refreshSelectedContentVersions();
@@ -240,6 +266,8 @@ private:
     QString selectedContentProjectId_;
     QString selectedContentVersionId_;
     std::vector<dawn::core::InstanceManifest> instances_;
+    QString autoCreatedInstanceNoticeText_;
+    QString autoCreatedInstanceId_;
     QString activeInstanceId_;
     QString activeInstanceTabId_ = QStringLiteral("overview");
 };

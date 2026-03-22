@@ -31,6 +31,7 @@ public:
     explicit BackupService(std::filesystem::path root);
 
     SnapshotMetadata create_snapshot_manifest(const InstanceManifest& manifest, const std::string& label, std::string* error = nullptr);
+    bool restore_snapshot(const SnapshotMetadata& snapshot, const std::filesystem::path& targetGameDir, std::string* error = nullptr) const;
     std::vector<SnapshotMetadata> list_snapshots(const std::string& instanceId, std::string* error = nullptr) const;
     RestorePlan build_restore_plan(const SnapshotMetadata& snapshot) const;
 

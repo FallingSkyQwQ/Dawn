@@ -146,6 +146,8 @@ Value global_settings_to_json(const GlobalSettings& settings) {
     object.emplace("minMemoryMb", Value(settings.minMemoryMb));
     object.emplace("maxMemoryMb", Value(settings.maxMemoryMb));
     object.emplace("backupStrategy", Value(to_string(settings.backupStrategy)));
+    object.emplace("backupScheduleDate", Value(settings.backupScheduleDate));
+    object.emplace("backupScheduleTime", Value(settings.backupScheduleTime));
     object.emplace("firstLaunchCompleted", Value(settings.firstLaunchCompleted));
     object.emplace("uiMode", Value(std::string(dawn::core::to_string(settings.uiMode))));
     object.emplace("lowDiskThresholdGb", Value(settings.lowDiskThresholdGb));
@@ -173,6 +175,8 @@ bool global_settings_from_json(const Value& value, GlobalSettings* settings, std
     const auto* min_memory = dawn::infra::json::find(object, "minMemoryMb");
     const auto* max_memory = dawn::infra::json::find(object, "maxMemoryMb");
     const auto* backup_strategy = dawn::infra::json::find(object, "backupStrategy");
+    const auto* backup_schedule_date = dawn::infra::json::find(object, "backupScheduleDate");
+    const auto* backup_schedule_time = dawn::infra::json::find(object, "backupScheduleTime");
     const auto* first_launch_completed = dawn::infra::json::find(object, "firstLaunchCompleted");
     const auto* ui_mode = dawn::infra::json::find(object, "uiMode");
     const auto* low_disk_threshold_gb = dawn::infra::json::find(object, "lowDiskThresholdGb");
@@ -200,6 +204,8 @@ bool global_settings_from_json(const Value& value, GlobalSettings* settings, std
     settings->minMemoryMb = static_cast<int>(min_memory->as_number());
     settings->maxMemoryMb = static_cast<int>(max_memory->as_number());
     settings->backupStrategy = backup_strategy_from_string(backup_strategy->as_string());
+    settings->backupScheduleDate = backup_schedule_date && backup_schedule_date->is_string() ? backup_schedule_date->as_string() : std::string{};
+    settings->backupScheduleTime = backup_schedule_time && backup_schedule_time->is_string() ? backup_schedule_time->as_string() : std::string("03:00");
     settings->firstLaunchCompleted = first_launch_completed && first_launch_completed->is_bool() ? first_launch_completed->as_bool() : false;
     settings->uiMode = ui_mode && ui_mode->is_string() ? ui_mode_from_string(ui_mode->as_string()) : UiMode::Novice;
     settings->lowDiskThresholdGb = low_disk_threshold_gb && low_disk_threshold_gb->is_number() ? static_cast<int>(low_disk_threshold_gb->as_number()) : 20;
@@ -281,6 +287,8 @@ GlobalSettings SettingsService::defaults() const {
     settings.minMemoryMb = 2048;
     settings.maxMemoryMb = 4096;
     settings.backupStrategy = BackupStrategy::BeforeUpdate;
+    settings.backupScheduleDate.clear();
+    settings.backupScheduleTime = "03:00";
     settings.firstLaunchCompleted = false;
     settings.uiMode = UiMode::Novice;
     settings.lowDiskThresholdGb = 20;

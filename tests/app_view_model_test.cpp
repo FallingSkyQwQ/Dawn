@@ -266,6 +266,32 @@ TEST(AppViewModel, CacheCleanupSummaryIsExposed) {
     std::filesystem::remove_all(root);
 }
 
+TEST(AppViewModel, BackupScheduleSettingsPersistAcrossReload) {
+    const auto root = std::filesystem::temp_directory_path() / "dawn-app-view-model-backup-settings";
+    std::filesystem::remove_all(root);
+
+    AppViewModel viewModel(QString::fromStdString(root.string()));
+    viewModel.setBackupStrategy(QStringLiteral("scheduled"));
+    viewModel.setBackupScheduleDate(QStringLiteral("2026-03-30"));
+    viewModel.setBackupScheduleTime(QStringLiteral("04:45"));
+
+    EXPECT_EQ(viewModel.backupStrategy(), QStringLiteral("scheduled"));
+    EXPECT_EQ(viewModel.backupScheduleDate(), QStringLiteral("2026-03-30"));
+    EXPECT_EQ(viewModel.backupScheduleTime(), QStringLiteral("04:45"));
+
+    AppViewModel reopened(QString::fromStdString(root.string()));
+    EXPECT_EQ(reopened.backupStrategy(), QStringLiteral("scheduled"));
+    EXPECT_EQ(reopened.backupScheduleDate(), QStringLiteral("2026-03-30"));
+    EXPECT_EQ(reopened.backupScheduleTime(), QStringLiteral("04:45"));
+
+    reopened.setBackupScheduleDate(QStringLiteral("invalid-date"));
+    reopened.setBackupScheduleTime(QStringLiteral("99:99"));
+    EXPECT_EQ(reopened.backupScheduleDate(), QStringLiteral("2026-03-30"));
+    EXPECT_EQ(reopened.backupScheduleTime(), QStringLiteral("04:45"));
+
+    std::filesystem::remove_all(root);
+}
+
 TEST(AppViewModel, HandleDroppedFileInstallsLocalModAndExposesResult) {
     const auto root = std::filesystem::temp_directory_path() / "dawn-app-view-model-drop";
     std::filesystem::remove_all(root);
@@ -309,6 +335,212 @@ TEST(AppViewModel, HandleDroppedFileInstallsLocalModAndExposesResult) {
     viewModel.setInstallLogFilter(QStringLiteral("failure"));
     EXPECT_EQ(viewModel.eventCenter().size(), 1);
     EXPECT_FALSE(viewModel.eventCenter().front().toMap().value("success").toBool());
+
+    std::filesystem::remove_all(root);
+}
+
+TEST(AppViewModel, HandleDroppedModpackCreatesNewInstanceAndUpdatesTargetContext) {
+    const auto root = std::filesystem::temp_directory_path() / "dawn-app-view-model-drop-modpack";
+    std::filesystem::remove_all(root);
+
+    const auto instance = create_instance(root);
+    const auto modpackPath = root / "drop" / "local-pack.mrpack";
+
+    std::string error;
+    ASSERT_TRUE(dawn::infra::fs::write_binary_file(modpackPath, "modrinth.index.json", &error)) << error;
+
+    AppViewModel viewModel(QString::fromStdString(root.string()));
+    const auto result = viewModel.handleDroppedFile(
+        QString::fromStdString(modpackPath.string()),
+        QString::fromStdString(instance.id));
+
+    EXPECT_TRUE(result.value("success").toBool());
+    EXPECT_EQ(result.value("status").toString(), QStringLiteral("succeeded"));
+    EXPECT_TRUE(result.value("requiresNewInstance").toBool());
+
+    const auto installedInstanceId = result.value("installedInstanceId").toString();
+    EXPECT_FALSE(installedInstanceId.isEmpty());
+    EXPECT_NE(installedInstanceId, QString::fromStdString(instance.id));
+    EXPECT_EQ(result.value("targetInstanceId").toString(), installedInstanceId);
+    EXPECT_EQ(viewModel.activeInstanceId(), installedInstanceId);
+    EXPECT_TRUE(viewModel.autoCreatedInstanceNoticeVisible());
+    EXPECT_EQ(viewModel.autoCreatedInstanceId(), installedInstanceId);
+    EXPECT_TRUE(viewModel.autoCreatedInstanceNoticeText().contains(installedInstanceId));
+    EXPECT_TRUE(viewModel.openAutoCreatedInstance());
+    EXPECT_EQ(viewModel.activeInstanceId(), installedInstanceId);
+    viewModel.clearAutoCreatedInstanceNotice();
+    EXPECT_FALSE(viewModel.autoCreatedInstanceNoticeVisible());
+
+    const auto eventCenter = viewModel.eventCenter();
+    ASSERT_EQ(eventCenter.size(), 1);
+    EXPECT_EQ(eventCenter.front().toMap().value("sourceType").toString(), QStringLiteral("local_drop"));
+    EXPECT_EQ(eventCenter.front().toMap().value("targetInstanceId").toString(), installedInstanceId);
+
+    std::filesystem::remove_all(root);
+}
+
+TEST(AppViewModel, ActiveInstanceAssetsReflectsInstanceDirectories) {
+    const auto root = std::filesystem::temp_directory_path() / "dawn-app-view-model-active-assets";
+    std::filesystem::remove_all(root);
+
+    const auto instance = create_instance(root);
+    std::string error;
+    ASSERT_TRUE(dawn::infra::fs::write_binary_file(std::filesystem::path(instance.gameDir) / "mods" / "example-mod.jar", "mod", &error)) << error;
+    ASSERT_TRUE(dawn::infra::fs::write_binary_file(std::filesystem::path(instance.gameDir) / "resourcepacks" / "example-pack.zip", "pack", &error)) << error;
+    ASSERT_TRUE(dawn::infra::fs::write_binary_file(std::filesystem::path(instance.gameDir) / "shaderpacks" / "example-shader.zip", "shader", &error)) << error;
+    ASSERT_TRUE(dawn::infra::fs::write_binary_file(std::filesystem::path(instance.gameDir) / "logs" / "latest.log", "log", &error)) << error;
+    ASSERT_TRUE(dawn::infra::fs::ensure_directory(std::filesystem::path(instance.gameDir) / "saves" / "world-1", &error)) << error;
+
+    AppViewModel viewModel(QString::fromStdString(root.string()));
+    viewModel.setActiveInstance(QString::fromStdString(instance.id));
+
+    const auto assets = viewModel.activeInstanceAssets();
+    EXPECT_EQ(assets.value("mods").toList().size(), 1);
+    EXPECT_EQ(assets.value("resourcepacks").toList().size(), 1);
+    EXPECT_EQ(assets.value("shaderpacks").toList().size(), 1);
+    EXPECT_EQ(assets.value("logs").toList().size(), 1);
+    EXPECT_EQ(assets.value("worlds").toList().size(), 1);
+
+    const auto runtime = assets.value("runtime").toMap();
+    EXPECT_EQ(runtime.value("instanceId").toString(), QString::fromStdString(instance.id));
+    EXPECT_EQ(runtime.value("gameDir").toString(), QString::fromStdString(std::filesystem::path(instance.gameDir).generic_string()));
+
+    std::filesystem::remove_all(root);
+}
+
+TEST(AppViewModel, AssetCommandsToggleAndRemoveFiles) {
+    const auto root = std::filesystem::temp_directory_path() / "dawn-app-view-model-asset-commands";
+    std::filesystem::remove_all(root);
+
+    const auto instance = create_instance(root);
+    const auto modsDir = std::filesystem::path(instance.gameDir) / "mods";
+    const auto worldsDir = std::filesystem::path(instance.gameDir) / "saves";
+    const auto modPath = modsDir / "toggle-mod.jar";
+    const auto disabledModPath = modsDir / "toggle-mod.jar.disabled";
+    const auto worldPath = worldsDir / "world-toggle";
+
+    std::string error;
+    ASSERT_TRUE(dawn::infra::fs::write_binary_file(modPath, "mod-bytes", &error)) << error;
+    ASSERT_TRUE(dawn::infra::fs::ensure_directory(worldPath, &error)) << error;
+
+    AppViewModel viewModel(QString::fromStdString(root.string()));
+    viewModel.setActiveInstance(QString::fromStdString(instance.id));
+
+    EXPECT_TRUE(viewModel.toggleAssetEnabled(QStringLiteral("mods"), QString::fromStdString(modPath.string()), false));
+    EXPECT_FALSE(std::filesystem::exists(modPath));
+    EXPECT_TRUE(std::filesystem::exists(disabledModPath));
+
+    auto assets = viewModel.activeInstanceAssets();
+    ASSERT_EQ(assets.value("mods").toList().size(), 1);
+    EXPECT_EQ(assets.value("mods").toList().front().toMap().value("status").toString(), QStringLiteral("Disabled"));
+
+    EXPECT_TRUE(viewModel.toggleAssetEnabled(QStringLiteral("mods"), QString::fromStdString(disabledModPath.string()), true));
+    EXPECT_TRUE(std::filesystem::exists(modPath));
+    EXPECT_FALSE(std::filesystem::exists(disabledModPath));
+
+    EXPECT_TRUE(viewModel.removeAsset(QString::fromStdString(modPath.string())));
+    EXPECT_FALSE(std::filesystem::exists(modPath));
+
+    EXPECT_TRUE(viewModel.removeAsset(QString::fromStdString(worldPath.string())));
+    EXPECT_FALSE(std::filesystem::exists(worldPath));
+
+    viewModel.setInstallLogSourceFilter(QStringLiteral("instance_asset"));
+    const auto assetEvents = viewModel.eventCenter();
+    EXPECT_GE(assetEvents.size(), 4);
+    EXPECT_TRUE(std::all_of(assetEvents.begin(), assetEvents.end(), [](const QVariant& value) {
+        return value.toMap().value("sourceType").toString() == QStringLiteral("instance_asset");
+    }));
+
+    std::filesystem::remove_all(root);
+}
+
+TEST(AppViewModel, AssetBatchCommandsApplyToActiveInstance) {
+    const auto root = std::filesystem::temp_directory_path() / "dawn-app-view-model-asset-batch";
+    std::filesystem::remove_all(root);
+
+    const auto instance = create_instance(root);
+    const auto modsDir = std::filesystem::path(instance.gameDir) / "mods";
+    const auto logsDir = std::filesystem::path(instance.gameDir) / "logs";
+
+    std::string error;
+    ASSERT_TRUE(dawn::infra::fs::write_binary_file(modsDir / "a.jar", "a", &error)) << error;
+    ASSERT_TRUE(dawn::infra::fs::write_binary_file(modsDir / "b.jar", "b", &error)) << error;
+    ASSERT_TRUE(dawn::infra::fs::write_binary_file(logsDir / "latest.log", "log", &error)) << error;
+    ASSERT_TRUE(dawn::infra::fs::write_binary_file(logsDir / "debug.log", "log", &error)) << error;
+
+    AppViewModel viewModel(QString::fromStdString(root.string()));
+    viewModel.setActiveInstance(QString::fromStdString(instance.id));
+
+    EXPECT_EQ(viewModel.setAllAssetsEnabled(QStringLiteral("mods"), false), 2);
+    EXPECT_TRUE(std::filesystem::exists(modsDir / "a.jar.disabled"));
+    EXPECT_TRUE(std::filesystem::exists(modsDir / "b.jar.disabled"));
+
+    EXPECT_EQ(viewModel.removeDisabledAssets(QStringLiteral("mods")), 2);
+    EXPECT_FALSE(std::filesystem::exists(modsDir / "a.jar.disabled"));
+    EXPECT_FALSE(std::filesystem::exists(modsDir / "b.jar.disabled"));
+
+    EXPECT_EQ(viewModel.removeAllAssets(QStringLiteral("logs")), 2);
+    EXPECT_FALSE(std::filesystem::exists(logsDir / "latest.log"));
+    EXPECT_FALSE(std::filesystem::exists(logsDir / "debug.log"));
+
+    viewModel.setInstallLogSourceFilter(QStringLiteral("instance_asset"));
+    const auto assetEvents = viewModel.eventCenter();
+    EXPECT_GE(assetEvents.size(), 6);
+
+    std::filesystem::remove_all(root);
+}
+
+TEST(AppViewModel, RemoteModpackInstallCreatesNoticeForNewInstance) {
+    const auto root = std::filesystem::temp_directory_path() / "dawn-app-view-model-remote-modpack";
+    std::filesystem::remove_all(root);
+
+    const auto instance = create_instance(root);
+
+    auto provider = std::make_shared<PreviewContentProvider>();
+    provider->items_ = {
+        {
+            "modpack-project",
+            "Modpack Project",
+            "Selected for remote modpack install",
+            "Dawn",
+            "",
+            "2026-03-22",
+            1200,
+            ProjectType::Modpack,
+            {"1.20.1"},
+            {LoaderType::Fabric},
+        }
+    };
+
+    ContentVersion version;
+    version.versionId = "5.0.0";
+    version.name = "Remote Pack";
+    version.fileUrls = {"https://example.invalid/remote-pack.mrpack"};
+    version.loaders = {LoaderType::Fabric};
+    version.gameVersions = {"1.20.1"};
+    provider->versions_ = {version};
+    provider->versionMap_["modpack-project"] = {version};
+
+    auto client = std::make_shared<dawn::infra::net::FakeHttpClient>();
+    client->push_response(dawn::infra::net::HttpResponse{200, {}, "remote modpack payload"});
+
+    AppViewModel viewModel(QString::fromStdString(root.string()), provider, client);
+
+    EXPECT_TRUE(viewModel.searchContent("pack", "modpack"));
+    EXPECT_TRUE(viewModel.selectTargetInstance(QString::fromStdString(instance.id)));
+    EXPECT_TRUE(viewModel.selectInstallVersion("5.0.0"));
+    EXPECT_TRUE(viewModel.installSelectedContent());
+
+    EXPECT_TRUE(viewModel.autoCreatedInstanceNoticeVisible());
+    const auto installedInstanceId = viewModel.autoCreatedInstanceId();
+    EXPECT_FALSE(installedInstanceId.isEmpty());
+    EXPECT_NE(installedInstanceId, QString::fromStdString(instance.id));
+    EXPECT_TRUE(viewModel.autoCreatedInstanceNoticeText().contains(installedInstanceId));
+    EXPECT_TRUE(viewModel.openAutoCreatedInstance());
+    EXPECT_EQ(viewModel.activeInstanceId(), installedInstanceId);
+
+    viewModel.clearAutoCreatedInstanceNotice();
+    EXPECT_FALSE(viewModel.autoCreatedInstanceNoticeVisible());
 
     std::filesystem::remove_all(root);
 }

@@ -52,6 +52,7 @@ if(TARGET GTest::gtest)
             microsoft_oauth_service_test.cpp
             modrinth_provider_protocol_test.cpp
             preflight_test.cpp
+            runtime_services_test.cpp
             task_pipeline_test.cpp
     )
 
@@ -61,6 +62,9 @@ if(TARGET GTest::gtest)
             GTest::gtest
             GTest::gtest_main
     )
+    if(MSVC)
+        target_compile_options(dawn_tests PRIVATE /FS)
+    endif()
 
     dawn_add_test_with_runtime_path(dawn_tests dawn_tests)
 
@@ -78,6 +82,9 @@ if(TARGET GTest::gtest)
                 GTest::gtest
                 Qt6::Core
         )
+        if(MSVC)
+            target_compile_options(dawn_ui_tests PRIVATE /FS)
+        endif()
 
         dawn_add_test_with_runtime_path(dawn_ui_tests dawn_ui_tests)
     endif()

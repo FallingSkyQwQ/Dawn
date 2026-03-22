@@ -1,6 +1,7 @@
 import QtQuick
 import QtQuick.Controls
 import QtQuick.Layouts
+import FluentUI 1.0
 import "../components"
 
 Item {
@@ -28,7 +29,7 @@ Item {
                     anchors.fill: parent
                     spacing: 8
 
-                    Text {
+                    FluText {
                         text: "Welcome to Dawn. This wizard covers the initial setup path in four steps."
                         color: "#f5f8fb"
                         font.pixelSize: 17
@@ -36,7 +37,7 @@ Item {
                         wrapMode: Text.WordWrap
                     }
 
-                    Text {
+                    FluText {
                         text: "Step through the data root, cache, and Java defaults, then seal the flow."
                         color: "#8ea0b7"
                         font.pixelSize: 12
@@ -58,7 +59,7 @@ Item {
                     Repeater {
                         model: appViewModel.wizardSteps
 
-                        delegate: Rectangle {
+                        delegate: FluFrame {
                             Layout.fillWidth: true
                             height: 72
                             radius: 14
@@ -70,14 +71,14 @@ Item {
                                 anchors.margins: 10
                                 spacing: 2
 
-                                Text {
+                                FluText {
                                     text: (modelData.index + 1) + ". " + modelData.title
                                     color: "#f5f8fb"
                                     font.pixelSize: 13
                                     font.bold: true
                                 }
 
-                                Text {
+                                FluText {
                                     text: modelData.summary
                                     color: "#93a4bb"
                                     font.pixelSize: 10
@@ -108,14 +109,14 @@ Item {
                             anchors.fill: parent
                             spacing: 14
 
-                            Text {
+                            FluText {
                                 text: "Dawn keeps instance state, content installs, and repair actions in separate workflows."
                                 color: "#dce5f0"
                                 font.pixelSize: 14
                                 wrapMode: Text.WordWrap
                             }
 
-                            Text {
+                            FluText {
                                 text: "Next, review where Dawn stores data and how its cache is maintained."
                                 color: "#8ea0b7"
                                 font.pixelSize: 12
@@ -125,7 +126,7 @@ Item {
                             RowLayout {
                                 width: parent.width
                                 Item { Layout.fillWidth: true }
-                                Button {
+                                FluFilledButton {
                                     text: "Next"
                                     onClicked: appViewModel.nextWizardStep()
                                 }
@@ -147,28 +148,28 @@ Item {
                             anchors.fill: parent
                             spacing: 12
 
-                            Text {
+                            FluText {
                                 text: "Data root: " + appViewModel.dataRoot
                                 color: "#f5f8fb"
                                 font.pixelSize: 14
                                 wrapMode: Text.WordWrap
                             }
 
-                            Text {
+                            FluText {
                                 text: "Cache path: " + appViewModel.cachePath
                                 color: "#f5f8fb"
                                 font.pixelSize: 14
                                 wrapMode: Text.WordWrap
                             }
 
-                            Text {
+                            FluText {
                                 text: "Disk state: " + appViewModel.diskSpaceStatus.statusLabel + " | Available " + appViewModel.diskSpaceStatus.availableDisplay + " | Threshold " + appViewModel.diskSpaceStatus.thresholdDisplay
                                 color: appViewModel.diskSpaceStatus.low ? "#f2c5ba" : "#9ce3b6"
                                 font.pixelSize: 12
                                 wrapMode: Text.WordWrap
                             }
 
-                            Text {
+                            FluText {
                                 text: appViewModel.lowDiskWarning.length > 0 ? appViewModel.lowDiskWarning : "Storage is within the configured threshold."
                                 color: "#8ea0b7"
                                 font.pixelSize: 12
@@ -177,12 +178,12 @@ Item {
 
                             RowLayout {
                                 width: parent.width
-                                Button {
+                                FluButton {
                                     text: "Back"
                                     onClicked: appViewModel.previousWizardStep()
                                 }
                                 Item { Layout.fillWidth: true }
-                                Button {
+                                FluFilledButton {
                                     text: "Next"
                                     onClicked: appViewModel.nextWizardStep()
                                 }
@@ -204,7 +205,7 @@ Item {
                             anchors.fill: parent
                             spacing: 12
 
-                            Text {
+                            FluText {
                                 text: "Current strategy: " + appViewModel.javaStrategy
                                 color: "#f5f8fb"
                                 font.pixelSize: 14
@@ -222,7 +223,7 @@ Item {
                                         { "id": "downloaded", "title": "Downloaded" }
                                     ]
 
-                                    delegate: Button {
+                                    delegate: FluButton {
                                         text: modelData.title
                                         checkable: true
                                         checked: appViewModel.javaStrategy === modelData.id
@@ -231,7 +232,7 @@ Item {
                                 }
                             }
 
-                            Text {
+                            FluText {
                                 text: "Auto is the safest default. Bundled and custom paths are useful when you already manage a runtime."
                                 color: "#8ea0b7"
                                 font.pixelSize: 12
@@ -240,12 +241,12 @@ Item {
 
                             RowLayout {
                                 width: parent.width
-                                Button {
+                                FluButton {
                                     text: "Back"
                                     onClicked: appViewModel.previousWizardStep()
                                 }
                                 Item { Layout.fillWidth: true }
-                                Button {
+                                FluFilledButton {
                                     text: "Next"
                                     onClicked: appViewModel.nextWizardStep()
                                 }
@@ -267,14 +268,14 @@ Item {
                             anchors.fill: parent
                             spacing: 12
 
-                            Text {
+                            FluText {
                                 text: "First launch completion will hide this wizard on the next route update."
                                 color: "#dce5f0"
                                 font.pixelSize: 14
                                 wrapMode: Text.WordWrap
                             }
 
-                            Text {
+                            FluText {
                                 text: "Data root: " + appViewModel.dataRoot + "\nCache path: " + appViewModel.cachePath + "\nJava strategy: " + appViewModel.javaStrategy
                                 color: "#8ea0b7"
                                 font.pixelSize: 12
@@ -283,12 +284,12 @@ Item {
 
                             RowLayout {
                                 width: parent.width
-                                Button {
+                                FluButton {
                                     text: "Back"
                                     onClicked: appViewModel.previousWizardStep()
                                 }
                                 Item { Layout.fillWidth: true }
-                                Button {
+                                FluFilledButton {
                                     text: "Finish Setup"
                                     onClicked: appViewModel.completeFirstLaunch()
                                 }

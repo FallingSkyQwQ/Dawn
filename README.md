@@ -1,12 +1,12 @@
 # Dawn
 
-Dawn is a Windows-first, instance-centric Minecraft launcher shell built with C++20, CMake, Qt 6, QML, and FluentUIbi.
+Dawn is a Windows-first, instance-centric Minecraft launcher shell built with C++20, CMake, Qt 6, QML, and FluentUI.
 
 ## Build
 
 ### Headless core build
 
-This mode does not require Qt or FluentUIbi and is the default.
+This mode does not require Qt or FluentUI and is the default.
 
 ```powershell
 cmake -S . -B build -DDAWN_BUILD_TESTS=ON -DDAWN_ENABLE_QT=OFF
@@ -23,7 +23,7 @@ cmake -S . -B build -DDAWN_ENABLE_QT=ON -DQt6_DIR="C:\Qt\6.x.x\msvc2019_64\lib\c
 cmake --build build
 ```
 
-If the `external/FluentUIbi` submodule is available, set `-DDAWN_USE_FLUENTUIBI=ON`. When the submodule is absent, Dawn falls back to a local Qt Quick shell so the project still builds.
+If the `external/FluentUI` submodule is available, set `-DDAWN_USE_FLUENTUI=ON`. When the submodule is absent, Dawn is required for Qt builds; configure the FluentUI submodule before building the GUI target.
 On Windows, the test targets inject the MinGW runtime `PATH` at launch to avoid DLL conflicts in multi-toolchain environments.
 
 ## Runtime modes
@@ -64,7 +64,7 @@ The code is layered so that the core library can be tested without Qt.
 
 ### P3
 
-* FluentUIbi integration toggles.
+* FluentUI integration toggles.
 * Expanded diagnostics, update simulation, drag-and-drop install, and deeper loader support.
 
 ## Capability Matrix
@@ -74,7 +74,7 @@ The code is layered so that the core library can be tested without Qt.
 | Core instance storage | implemented | JSON-backed instance manifests and workbench model are wired in. |
 | Settings | implemented | Global settings model, first-launch state, novice/advanced mode, low-disk threshold, cache maintenance, and JSON persistence are available. |
 | Integrity hashing | implemented | SHA-256 hashing is real and used by download verification. |
-| Accounts | protocol-adapter | Microsoft and offline caches exist; OAuth plus Xbox Live, XSTS, and Minecraft profile protocol layers are wired, transport defaults to fake on non-Windows. |
+| Accounts | protocol-adapter | Microsoft and offline caches exist; OAuth plus Xbox Live, XSTS, and Minecraft profile protocol layers are wired, transport uses the real cross-platform HTTP backend. |
 | Java | scaffolded | Runtime discovery and profile stubs are present. |
 | Minecraft versions | scaffolded | Version classification and lookup are local stubs. |
 | Loaders | scaffolded | Fabric, Quilt, Forge, NeoForge, and OptiFine profiles are represented. |
@@ -82,16 +82,17 @@ The code is layered so that the core library can be tested without Qt.
 | Content install | executable scaffold | Mod/resourcepack/shader installs now resolve versions, download artifacts, deploy into instance folders, write content locks, and emit structured rollback events when cleanup is needed. Modpack requests return `create instance required`. |
 | Diagnostics | scaffolded | Log rule matching returns human-readable categories. |
 | Backups | scaffolded | Snapshot metadata and restore plans are local stubs. |
-| Modrinth integration | protocol-adapter | Search/version URL builders and JSON parsing are wired; Windows uses WinHTTP, other platforms use fake transport. |
-| Microsoft auth | protocol-adapter | Device-code, Xbox Live, XSTS, and Minecraft profile protocol layers are wired; Windows uses WinHTTP, other platforms use fake transport. |
-| HTTP transport | partial | `WinHttpClient` is available on Windows; the default factory falls back to `FakeHttpClient` elsewhere. |
-| FluentUIbi | planned | The shell is compatible with the submodule but does not depend on it. |
+| Modrinth integration | protocol-adapter | Search/version URL builders and JSON parsing are wired; all platforms use the shared HTTP transport implementation. |
+| Microsoft auth | protocol-adapter | Device-code, Xbox Live, XSTS, and Minecraft profile protocol layers are wired; all platforms use the shared HTTP transport implementation. |
+| HTTP transport | partial | `CurlHttpClient` is the default transport across platforms; `WinHttpClient` remains available for platform-specialized paths. |
+| FluentUI | planned | The shell is compatible with the submodule but does not depend on it. |
 
 ## Known Gaps
 
-* Windows has a real WinHTTP transport; other platforms fall back to fake transport by default.
+* Cross-platform transport is now unified and does not rely on fake network fallbacks by default.
 * Real Minecraft runtime orchestration is still stubbed.
-* FluentUIbi integration is behind a CMake switch and falls back when the submodule is not present.
+* FluentUI is a required dependency for Qt GUI builds.
 * Download executor status: executable scaffold with mirror fallback, basic resume, concurrent chunked transfer, rate limiting, and batch concurrency; global bandwidth governance and adaptive scheduling are still pending.
 * Instance install chain status: mod, resourcepack, and shader installs now flow through version resolution, download, deployment, content lock persistence, and structured rollback events on failure. Modpack installs still stop at "create instance required".
 * Microsoft identity protocol coverage now reaches Minecraft profile, but end-to-end live account login still needs real-world integration testing against the platform services.
+

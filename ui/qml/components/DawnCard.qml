@@ -1,5 +1,5 @@
 import QtQuick
-import QtQuick.Controls
+import FluentUI 1.0
 
 Rectangle {
     id: root
@@ -21,14 +21,14 @@ Rectangle {
         Column {
             spacing: 4
 
-            Text {
+            FluText {
                 text: root.title
                 color: "#f4f7fb"
                 font.pixelSize: 22
                 font.bold: true
             }
 
-            Text {
+            FluText {
                 visible: root.subtitle.length > 0
                 text: root.subtitle
                 color: "#8ea0b7"

@@ -1,11 +1,145 @@
 import QtQuick
 import QtQuick.Controls
 import QtQuick.Layouts
+import FluentUI 1.0
 import "../components"
 
 Item {
     id: root
     property var appViewModel
+    property int repairLogPageCurrent: 1
+    property int repairLogItemsPerPage: 12
+
+    function statusProgressValue(status) {
+        var normalized = (status || "").toLowerCase()
+        if (normalized === "succeeded" || normalized === "done" || normalized === "completed") {
+            return 1
+        }
+        if (normalized === "failed" || normalized === "error" || normalized === "blocked") {
+            return 1
+        }
+        if (normalized === "running" || normalized === "in_progress" || normalized === "pending") {
+            return 0.35
+        }
+        return 0
+    }
+
+    function repairPlanProgressValue() {
+        var steps = appViewModel ? appViewModel.installPreview.repairPlan.steps : []
+        if (!steps || steps.length === 0) {
+            return 0
+        }
+        var score = 0
+        for (var i = 0; i < steps.length; ++i) {
+            score += statusProgressValue(steps[i].status)
+        }
+        var ratio = score / steps.length
+        if (ratio < 0) {
+            return 0
+        }
+        if (ratio > 1) {
+            return 1
+        }
+        return ratio
+    }
+
+    function repairPlanProgressText() {
+        return Math.round(repairPlanProgressValue() * 100) + "%"
+    }
+
+    function diagnosticsRows() {
+        var rows = []
+        var data = appViewModel ? appViewModel.installDiagnostics : []
+        for (var i = 0; i < data.length; ++i) {
+            var item = data[i]
+            rows.push({
+                "_key": (item.code || "diag") + "-" + i,
+                "severity": item.severity || "",
+                "code": item.code || "",
+                "message": item.message || "",
+                "suggestion": item.suggestion || ""
+            })
+        }
+        return rows
+    }
+
+    function rollbackRows() {
+        var rows = []
+        var data = appViewModel ? appViewModel.rollbackEvents : []
+        for (var i = 0; i < data.length; ++i) {
+            var item = data[i]
+            rows.push({
+                "_key": (item.step || "rollback") + "-" + i,
+                "step": item.step || "",
+                "action": item.action || "",
+                "target": item.target || "",
+                "status": item.status || "",
+                "message": item.message || ""
+            })
+        }
+        return rows
+    }
+
+    function repairLogRows() {
+        var rows = []
+        var data = appViewModel ? appViewModel.repairExecutionLogs : []
+        for (var i = 0; i < data.length; ++i) {
+            rows.push({
+                "_key": "repair-log-" + i,
+                "index": i + 1,
+                "line": data[i]
+            })
+        }
+        return rows
+    }
+
+    function pagedRows(rows, pageCurrent, itemsPerPage) {
+        if (!rows || rows.length === 0) {
+            return []
+        }
+        if (itemsPerPage <= 0) {
+            return rows
+        }
+        var page = pageCurrent
+        if (page < 1) {
+            page = 1
+        }
+        var start = (page - 1) * itemsPerPage
+        if (start >= rows.length) {
+            return []
+        }
+        var end = Math.min(start + itemsPerPage, rows.length)
+        return rows.slice(start, end)
+    }
+
+    function repairLogPageCount() {
+        var data = appViewModel ? appViewModel.repairExecutionLogs : []
+        return data.length > 0 ? Math.ceil(data.length / repairLogItemsPerPage) : 0
+    }
+
+    function normalizePage(page, count) {
+        if (count <= 0) {
+            return 1
+        }
+        if (page < 1) {
+            return 1
+        }
+        if (page > count) {
+            return count
+        }
+        return page
+    }
+
+    function pagedRepairLogRows() {
+        return pagedRows(repairLogRows(), repairLogPageCurrent, repairLogItemsPerPage)
+    }
+
+    Connections {
+        target: root.appViewModel
+        function onDataChanged() {
+            root.repairLogPageCurrent = root.normalizePage(root.repairLogPageCurrent, root.repairLogPageCount())
+        }
+    }
 
     Flickable {
         anchors.fill: parent
@@ -28,14 +162,14 @@ Item {
                     anchors.fill: parent
                     spacing: 8
 
-                    Text {
+                    FluText {
                         text: "The diagnostics model already distinguishes info, warning, and error states."
                         color: "#dce5f0"
                         font.pixelSize: 14
                     }
 
-                    Text {
-                        text: "This page will become the launch log and repair workspace once the runtime layer is wired to real downloads."
+                    FluText {
+                        text: "Launch diagnostics and repair execution are driven by the same install and runtime service pipeline."
                         color: "#8ea0b7"
                         font.pixelSize: 12
                     }
@@ -49,7 +183,7 @@ Item {
                 title: "Low Disk Warning"
                 subtitle: "The current data root has limited free space."
 
-                Text {
+                FluText {
                     anchors.fill: parent
                     text: appViewModel.lowDiskWarning
                     color: "#f2c5ba"
@@ -71,7 +205,7 @@ Item {
                     RowLayout {
                         width: parent.width
 
-                        Text {
+                        FluText {
                             text: "Preview diagnostics and rollback events are populated from the core install pipeline."
                             color: "#dce5f0"
                             font.pixelSize: 13
@@ -79,165 +213,81 @@ Item {
                             Layout.fillWidth: true
                         }
 
-                        Button {
+                        FluButton {
                             text: "Refresh Preview"
                             onClicked: appViewModel.refreshInstallPreview()
                         }
 
-                        Button {
+                        FluFilledButton {
                             text: "Execute Repair"
                             enabled: appViewModel.installPreview.repairPlanAvailable
                             onClicked: appViewModel.executeRepairPlan()
                         }
                     }
 
-                    Text {
+                    FluText {
                         text: appViewModel.installDiagnostics.length > 0 ? ("Diagnostics: " + appViewModel.installDiagnostics.length) : "No install diagnostics available yet."
                         color: "#8ea0b7"
                         font.pixelSize: 12
                     }
 
-                    Text {
+                    FluText {
                         text: "Repair status: " + appViewModel.repairExecutionStatus
                         color: "#dce5f0"
                         font.pixelSize: 12
                         wrapMode: Text.WordWrap
                     }
+
+                    RowLayout {
+                        width: parent.width
+                        spacing: 12
+
+                        FluProgressRing {
+                            Layout.preferredWidth: 48
+                            Layout.preferredHeight: 48
+                            indeterminate: false
+                            progressVisible: true
+                            value: root.repairPlanProgressValue()
+                        }
+
+                        Column {
+                            Layout.fillWidth: true
+                            spacing: 6
+
+                            FluText {
+                                text: "Repair plan progress: " + root.repairPlanProgressText()
+                                color: "#dce5f0"
+                                font.pixelSize: 12
+                            }
+
+                            FluProgressBar {
+                                width: parent.width
+                                indeterminate: false
+                                progressVisible: true
+                                value: root.repairPlanProgressValue()
+                            }
+                        }
+                    }
                 }
             }
 
-            DawnCard {
+            EventCenterPanel {
                 Layout.fillWidth: true
                 Layout.preferredHeight: 420
                 title: "Event Center"
                 subtitle: "Unified install, repair, download, and diagnostic history."
-
-                Column {
-                    anchors.fill: parent
-                    spacing: 10
-
-                    RowLayout {
-                        width: parent.width
-                        spacing: 10
-
-                        ComboBox {
-                            Layout.preferredWidth: 170
-                            model: [
-                                { "label": "All Types", "value": "all" },
-                                { "label": "Install", "value": "install" },
-                                { "label": "Download", "value": "download" },
-                                { "label": "Repair", "value": "repair" },
-                                { "label": "Diagnostic", "value": "diagnostic" }
-                            ]
-                            textRole: "label"
-                            valueRole: "value"
-                            currentIndex: appViewModel.eventCenterTypeFilter === "install" ? 1 : (appViewModel.eventCenterTypeFilter === "download" ? 2 : (appViewModel.eventCenterTypeFilter === "repair" ? 3 : (appViewModel.eventCenterTypeFilter === "diagnostic" ? 4 : 0)))
-                            onActivated: appViewModel.setEventCenterTypeFilter(currentValue)
-                        }
-
-                        ComboBox {
-                            Layout.preferredWidth: 150
-                            model: [
-                                { "label": "All", "value": "all" },
-                                { "label": "Success", "value": "success" },
-                                { "label": "Failure", "value": "failure" }
-                            ]
-                            textRole: "label"
-                            valueRole: "value"
-                            currentIndex: appViewModel.installLogFilter === "success" ? 1 : (appViewModel.installLogFilter === "failure" ? 2 : 0)
-                            onActivated: appViewModel.setInstallLogFilter(currentValue)
-                        }
-
-                        ComboBox {
-                            Layout.preferredWidth: 190
-                            model: [
-                                { "label": "All Sources", "value": "all" },
-                                { "label": "Local Drop", "value": "local_drop" },
-                                { "label": "Remote Content", "value": "remote_content" },
-                                { "label": "Repair", "value": "repair" },
-                                { "label": "Diagnostic", "value": "diagnostic" }
-                            ]
-                            textRole: "label"
-                            valueRole: "value"
-                            currentIndex: appViewModel.installLogSourceFilter === "local_drop" ? 1 : (appViewModel.installLogSourceFilter === "remote_content" ? 2 : (appViewModel.installLogSourceFilter === "repair" ? 3 : (appViewModel.installLogSourceFilter === "diagnostic" ? 4 : 0)))
-                            onActivated: appViewModel.setInstallLogSourceFilter(currentValue)
-                        }
-
-                        Item { Layout.fillWidth: true }
-
-                        Text {
-                            text: appViewModel.eventCenter.length + " entries"
-                            color: "#8ea0b7"
-                            font.pixelSize: 11
-                        }
-                    }
-
-                    ListView {
-                        width: parent.width
-                        height: 210
-                        clip: true
-                        spacing: 8
-                        model: appViewModel.eventCenter
-
-                        delegate: Rectangle {
-                            width: ListView.view.width
-                            height: 74
-                            radius: 12
-                            color: modelData.selected ? Qt.rgba(0.24, 0.35, 0.52, 0.96) : (modelData.success ? Qt.rgba(0.14, 0.24, 0.18, 0.95) : Qt.rgba(0.28, 0.17, 0.16, 0.95))
-                            border.color: modelData.selected ? Qt.rgba(0.48, 0.64, 0.98, 0.55) : Qt.rgba(1, 1, 1, 0.05)
-
-                            MouseArea {
-                                anchors.fill: parent
-                                onClicked: appViewModel.selectEvent(modelData.eventId)
-                            }
-
-                            Column {
-                                anchors.fill: parent
-                                anchors.margins: 10
-                                spacing: 3
-                                Text { text: modelData.time + "  |  " + modelData.eventType + "  |  " + modelData.sourceType + "  |  " + modelData.result; color: "#f5f8fb"; font.pixelSize: 12; font.bold: true }
-                                Text { text: "Target: " + modelData.targetInstanceId + "  |  " + modelData.summary; color: "#dce5f0"; font.pixelSize: 11; wrapMode: Text.WordWrap }
-                            }
-                        }
-                    }
-
-                    Rectangle {
-                        width: parent.width
-                        height: 92
-                        radius: 12
-                        color: Qt.rgba(1, 1, 1, 0.03)
-                        border.color: Qt.rgba(1, 1, 1, 0.05)
-
-                        Column {
-                            anchors.fill: parent
-                            anchors.margins: 10
-                            spacing: 4
-
-                            Text {
-                                text: ((appViewModel.selectedEventContext.eventId || "").length > 0) ? ("Selected: " + appViewModel.selectedEventContext.eventType + " -> " + appViewModel.selectedEventContext.eventTargetPage) : "Select an event to preview context."
-                                color: "#f5f8fb"
-                                font.pixelSize: 13
-                                font.bold: true
-                            }
-
-                            Text {
-                                text: appViewModel.selectedEventContext.summary || "No event selected."
-                                color: "#dce5f0"
-                                font.pixelSize: 11
-                                wrapMode: Text.WordWrap
-                            }
-
-                            Text {
-                                text: ((appViewModel.eventTargetInstanceId || "").length > 0) ? ("Instance: " + appViewModel.eventTargetInstanceId) : (((appViewModel.eventTargetProjectId || "").length > 0) ? ("Project: " + appViewModel.eventTargetProjectId + "  |  Version: " + appViewModel.selectedEventContext.versionId) : "No target context available.")
-                                color: "#8ea0b7"
-                                font.pixelSize: 11
-                                wrapMode: Text.WordWrap
-                            }
-                        }
-                    }
-                }
+                eventsModel: root.appViewModel.eventCenter
+                selectedContext: root.appViewModel.selectedEventContext
+                selectedEventId: root.appViewModel.selectedEventId
+                statusFilter: root.appViewModel.installLogFilter
+                sourceFilter: root.appViewModel.installLogSourceFilter
+                typeFilter: root.appViewModel.eventCenterTypeFilter
+                onEventActivated: function(eventId) { root.appViewModel.selectEvent(eventId) }
+                onStatusFilterRequested: function(value) { root.appViewModel.setInstallLogFilter(value) }
+                onSourceFilterRequested: function(value) { root.appViewModel.setInstallLogSourceFilter(value) }
+                onTypeFilterRequested: function(value) { root.appViewModel.setEventCenterTypeFilter(value) }
+                onOpenContextRequested: function() { root.appViewModel.navigateToEventContext() }
             }
-
             DawnCard {
                 Layout.fillWidth: true
                 Layout.preferredHeight: 360
@@ -248,7 +298,7 @@ Item {
                     anchors.fill: parent
                     spacing: 12
 
-                    Rectangle {
+                    FluFrame {
                         width: parent.width
                         height: 86
                         radius: 14
@@ -259,8 +309,8 @@ Item {
                             anchors.fill: parent
                             anchors.margins: 14
                             spacing: 6
-                            Text { text: appViewModel.primaryPreflight.ready ? "Ready to launch" : "Preflight requires attention"; color: "#f5f8fb"; font.pixelSize: 16; font.bold: true }
-                            Text { text: appViewModel.primaryPreflight.ready ? "No blocking issues were found." : "Inspect the issue list below."; color: "#dce5f0"; font.pixelSize: 12 }
+                            FluText { text: appViewModel.primaryPreflight.ready ? "Ready to launch" : "Preflight requires attention"; color: "#f5f8fb"; font.pixelSize: 16; font.bold: true }
+                            FluText { text: appViewModel.primaryPreflight.ready ? "No blocking issues were found." : "Inspect the issue list below."; color: "#dce5f0"; font.pixelSize: 12 }
                         }
                     }
 
@@ -269,7 +319,7 @@ Item {
                         Repeater {
                             model: appViewModel.primaryPreflight.issues
 
-                            delegate: Rectangle {
+                            delegate: FluFrame {
                                 width: parent.width
                                 height: 80
                                 radius: 14
@@ -280,9 +330,9 @@ Item {
                                     anchors.fill: parent
                                     anchors.margins: 12
                                     spacing: 4
-                                    Text { text: modelData.severity.toUpperCase() + "  |  " + modelData.code; color: "#f5f8fb"; font.pixelSize: 14; font.bold: true }
-                                    Text { text: modelData.message; color: "#dce5f0"; font.pixelSize: 12 }
-                                    Text { text: modelData.suggestion; color: "#8ea0b7"; font.pixelSize: 12 }
+                                    FluText { text: modelData.severity.toUpperCase() + "  |  " + modelData.code; color: "#f5f8fb"; font.pixelSize: 14; font.bold: true }
+                                    FluText { text: modelData.message; color: "#dce5f0"; font.pixelSize: 12 }
+                                    FluText { text: modelData.suggestion; color: "#8ea0b7"; font.pixelSize: 12 }
                                 }
                             }
                         }
@@ -296,30 +346,15 @@ Item {
                 title: "Install Diagnostics"
                 subtitle: "Structured dependency checks and conflict reasons."
 
-                Column {
+                FluTableView {
                     anchors.fill: parent
-                    spacing: 10
-
-                    Repeater {
-                        model: appViewModel.installDiagnostics
-
-                        delegate: Rectangle {
-                            width: parent.width
-                            height: 82
-                            radius: 14
-                            color: Qt.rgba(1, 1, 1, 0.03)
-                            border.color: Qt.rgba(1, 1, 1, 0.05)
-
-                            Column {
-                                anchors.fill: parent
-                                anchors.margins: 12
-                                spacing: 4
-                                Text { text: modelData.severity.toUpperCase() + "  |  " + modelData.code; color: "#f5f8fb"; font.pixelSize: 14; font.bold: true }
-                                Text { text: modelData.message; color: "#dce5f0"; font.pixelSize: 12; wrapMode: Text.WordWrap }
-                                Text { text: modelData.suggestion; color: "#8ea0b7"; font.pixelSize: 12; wrapMode: Text.WordWrap }
-                            }
-                        }
-                    }
+                    columnSource: [
+                        { "title": "Severity", "dataIndex": "severity", "width": 90 },
+                        { "title": "Code", "dataIndex": "code", "width": 150 },
+                        { "title": "Message", "dataIndex": "message", "width": 360 },
+                        { "title": "Suggestion", "dataIndex": "suggestion", "width": 300 }
+                    ]
+                    dataSource: root.diagnosticsRows()
                 }
             }
 
@@ -329,69 +364,48 @@ Item {
                 title: "Rollback Events"
                 subtitle: "Structured cleanup steps emitted when install checks fail."
 
-                Column {
+                FluTableView {
                     anchors.fill: parent
-                    spacing: 10
-
-                    Repeater {
-                        model: appViewModel.rollbackEvents
-
-                        delegate: Rectangle {
-                            width: parent.width
-                            height: 84
-                            radius: 14
-                            color: Qt.rgba(1, 1, 1, 0.03)
-                            border.color: Qt.rgba(1, 1, 1, 0.05)
-
-                            Column {
-                                anchors.fill: parent
-                                anchors.margins: 12
-                                spacing: 4
-                                Text { text: modelData.step + "  |  " + modelData.action; color: "#f5f8fb"; font.pixelSize: 14; font.bold: true }
-                                Text { text: modelData.target; color: "#dce5f0"; font.pixelSize: 12; wrapMode: Text.WordWrap }
-                                Text { text: modelData.status + (modelData.message.length > 0 ? "  |  " + modelData.message : ""); color: "#8ea0b7"; font.pixelSize: 12; wrapMode: Text.WordWrap }
-                            }
-                        }
-                    }
+                    columnSource: [
+                        { "title": "Step", "dataIndex": "step", "width": 140 },
+                        { "title": "Action", "dataIndex": "action", "width": 160 },
+                        { "title": "Target", "dataIndex": "target", "width": 300 },
+                        { "title": "Status", "dataIndex": "status", "width": 120 },
+                        { "title": "Message", "dataIndex": "message", "width": 220 }
+                    ]
+                    dataSource: root.rollbackRows()
                 }
             }
 
             DawnCard {
                 Layout.fillWidth: true
-                Layout.preferredHeight: 280
+                Layout.preferredHeight: 330
                 title: "Repair Execution Logs"
                 subtitle: "The live repair run writes human-readable progress here."
 
-                Column {
+                ColumnLayout {
                     anchors.fill: parent
                     spacing: 10
 
-                    Repeater {
-                        model: appViewModel.repairExecutionLogs
-
-                        delegate: Rectangle {
-                            width: parent.width
-                            height: 56
-                            radius: 14
-                            color: Qt.rgba(1, 1, 1, 0.03)
-                            border.color: Qt.rgba(1, 1, 1, 0.05)
-
-                            Text {
-                                anchors.fill: parent
-                                anchors.margins: 12
-                                text: modelData
-                                color: "#dce5f0"
-                                font.pixelSize: 12
-                                wrapMode: Text.WordWrap
-                            }
-                        }
+                    FluTableView {
+                        Layout.fillWidth: true
+                        Layout.fillHeight: true
+                        columnSource: [
+                            { "title": "#", "dataIndex": "index", "width": 60 },
+                            { "title": "Log", "dataIndex": "line", "width": 900 }
+                        ]
+                        dataSource: root.pagedRepairLogRows()
                     }
 
-                    Text {
-                        visible: appViewModel.repairExecutionLogs.length === 0
-                        text: "No repair execution has been run yet."
-                        color: "#8ea0b7"
-                        font.pixelSize: 12
+                    FluPagination {
+                        Layout.alignment: Qt.AlignHCenter
+                        pageCurrent: root.repairLogPageCurrent
+                        pageButtonCount: 5
+                        itemCount: root.appViewModel ? root.appViewModel.repairExecutionLogs.length : 0
+                        __itemPerPage: root.repairLogItemsPerPage
+                        onRequestPage: function(page) {
+                            root.repairLogPageCurrent = page
+                        }
                     }
                 }
             }

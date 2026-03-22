@@ -590,14 +590,16 @@ TEST(ContentInstallService, ReportsLocalModpackCreateInstanceRequired) {
 
     const auto result = service.install_local_file(modpackPath, instance.id, &queue);
 
-    EXPECT_FALSE(result.success);
+    EXPECT_TRUE(result.success);
     EXPECT_TRUE(result.requiresNewInstance);
-    EXPECT_EQ(result.status, ContentInstallStatus::CreateInstanceRequired);
-    EXPECT_EQ(result.plan.status, TaskStatus::Paused);
-    EXPECT_FALSE(result.plan.steps.empty());
-    EXPECT_EQ(result.plan.steps.front().id, "create-instance");
+    EXPECT_EQ(result.status, ContentInstallStatus::Succeeded);
+    EXPECT_FALSE(result.installedInstanceId.empty());
+    EXPECT_EQ(result.plan.status, TaskStatus::Succeeded);
+    EXPECT_FALSE(result.deployedPath.empty());
+    EXPECT_TRUE(std::filesystem::exists(result.deployedPath));
+    EXPECT_TRUE(std::filesystem::exists(result.lockPath));
     EXPECT_EQ(queue.tasks().size(), 1u);
-    EXPECT_EQ(queue.tasks().front().status, TaskStatus::Paused);
+    EXPECT_EQ(queue.tasks().front().status, TaskStatus::Succeeded);
 
     std::filesystem::remove_all(root);
 }
@@ -677,6 +679,12 @@ TEST(ContentInstallService, ReportsModpackCreateInstanceRequired) {
     std::filesystem::remove_all(root);
 
     FixedContentProvider provider;
+    ContentVersion modpackVersion;
+    modpackVersion.versionId = "latest";
+    modpackVersion.fileUrls = {"https://example.invalid/modpack.mrpack"};
+    modpackVersion.gameVersions = {"1.20.1"};
+    modpackVersion.loaders = {LoaderType::Fabric};
+    provider.versions_ = {modpackVersion};
     DownloadService downloadService(make_http_client("unused"));
     ContentInstallService service(root, downloadService);
 
@@ -690,14 +698,16 @@ TEST(ContentInstallService, ReportsModpackCreateInstanceRequired) {
     TaskQueue queue;
     const auto result = service.install(request, provider, &queue);
 
-    EXPECT_FALSE(result.success);
+    EXPECT_TRUE(result.success);
     EXPECT_TRUE(result.requiresNewInstance);
-    EXPECT_EQ(result.status, ContentInstallStatus::CreateInstanceRequired);
-    EXPECT_EQ(result.plan.status, TaskStatus::Paused);
-    EXPECT_FALSE(result.plan.steps.empty());
-    EXPECT_EQ(result.plan.steps.front().id, "create-instance");
+    EXPECT_EQ(result.status, ContentInstallStatus::Succeeded);
+    EXPECT_FALSE(result.installedInstanceId.empty());
+    EXPECT_EQ(result.plan.status, TaskStatus::Succeeded);
+    EXPECT_FALSE(result.deployedPath.empty());
+    EXPECT_TRUE(std::filesystem::exists(result.deployedPath));
+    EXPECT_TRUE(std::filesystem::exists(result.lockPath));
     EXPECT_EQ(queue.tasks().size(), 1u);
-    EXPECT_EQ(queue.tasks().front().status, TaskStatus::Paused);
+    EXPECT_EQ(queue.tasks().front().status, TaskStatus::Succeeded);
 
     std::filesystem::remove_all(root);
 }
