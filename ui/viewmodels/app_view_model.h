@@ -40,7 +40,9 @@ class AppViewModel final : public QObject {
     Q_PROPERTY(QVariantList rollbackEvents READ rollbackEvents NOTIFY dataChanged)
     Q_PROPERTY(QVariantList installLogs READ installLogs NOTIFY dataChanged)
     Q_PROPERTY(QString installLogFilter READ installLogFilter WRITE setInstallLogFilter NOTIFY dataChanged)
+    Q_PROPERTY(QString installLogSourceFilter READ installLogSourceFilter WRITE setInstallLogSourceFilter NOTIFY dataChanged)
     Q_PROPERTY(QVariantList repairExecutionLogs READ repairExecutionLogs NOTIFY dataChanged)
+    Q_PROPERTY(QString contentInstallStatus READ contentInstallStatus NOTIFY dataChanged)
     Q_PROPERTY(QVariantMap lastDroppedFileResult READ lastDroppedFileResult NOTIFY dataChanged)
     Q_PROPERTY(QVariantList wizardSteps READ wizardSteps NOTIFY dataChanged)
     Q_PROPERTY(int wizardStepIndex READ wizardStepIndex NOTIFY dataChanged)
@@ -82,7 +84,9 @@ public:
     [[nodiscard]] QVariantList rollbackEvents() const;
     [[nodiscard]] QVariantList installLogs() const;
     [[nodiscard]] QString installLogFilter() const;
+    [[nodiscard]] QString installLogSourceFilter() const;
     [[nodiscard]] QVariantList repairExecutionLogs() const;
+    [[nodiscard]] QString contentInstallStatus() const;
     [[nodiscard]] QVariantMap lastDroppedFileResult() const;
     [[nodiscard]] QVariantList wizardSteps() const;
     [[nodiscard]] int wizardStepIndex() const;
@@ -113,6 +117,7 @@ public:
     Q_INVOKABLE bool selectSearchResult(const QString& projectId);
     Q_INVOKABLE bool selectTargetInstance(const QString& instanceId);
     Q_INVOKABLE bool selectInstallVersion(const QString& versionId);
+    Q_INVOKABLE bool installSelectedContent();
     Q_INVOKABLE void refreshInstallPreview();
     Q_INVOKABLE bool nextWizardStep();
     Q_INVOKABLE bool previousWizardStep();
@@ -121,6 +126,7 @@ public:
     Q_INVOKABLE bool executeRepairPlan(int planIndex);
     Q_INVOKABLE bool completeFirstLaunch();
     Q_INVOKABLE void setInstallLogFilter(const QString& filter);
+    Q_INVOKABLE void setInstallLogSourceFilter(const QString& filter);
     Q_INVOKABLE QVariantMap handleDroppedFile(const QString& path, const QString& instanceId);
     Q_INVOKABLE void setUiMode(const QString& mode);
     Q_INVOKABLE void setJavaStrategy(const QString& strategy);
@@ -160,7 +166,7 @@ private:
     void updateSelectedContentPreview();
     void refreshSelectedContentVersions();
     void populateSearchResults(const dawn::core::SearchResult& result);
-    void recordInstallLog(const QString& type, const QString& targetInstanceId, bool success, const QString& summary, const QString& result = QString());
+    void recordInstallLog(const QString& type, const QString& sourceType, const QString& targetInstanceId, bool success, const QString& summary, const QString& result = QString());
 
     QString dataRoot_;
     dawn::core::SettingsService settingsService_;
@@ -181,6 +187,7 @@ private:
     struct InstallLogEntry {
         QString time;
         QString type;
+        QString sourceType;
         QString targetInstanceId;
         QString result;
         QString summary;
@@ -188,7 +195,9 @@ private:
     };
     std::vector<InstallLogEntry> installLogs_;
     QString installLogFilter_ = QStringLiteral("all");
+    QString installLogSourceFilter_ = QStringLiteral("all");
     std::vector<std::string> repairExecutionLogs_;
+    QString contentInstallStatus_ = QStringLiteral("No content install run");
     QVariantMap lastDroppedFileResult_;
     dawn::core::DependencyCheckResult installPreview_;
     QString installPreviewStatus_ = QStringLiteral("No install preview run");

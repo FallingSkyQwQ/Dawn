@@ -205,22 +205,22 @@ Item {
                         spacing: 8
                         model: appViewModel.installLogs
 
-                        delegate: Rectangle {
-                            width: ListView.view.width
-                            height: 70
-                            radius: 12
-                            color: modelData.success ? Qt.rgba(0.14, 0.24, 0.18, 0.95) : Qt.rgba(0.28, 0.17, 0.16, 0.95)
-                            border.color: Qt.rgba(1, 1, 1, 0.05)
+                                delegate: Rectangle {
+                                    width: ListView.view.width
+                                    height: 70
+                                    radius: 12
+                                    color: modelData.success ? Qt.rgba(0.14, 0.24, 0.18, 0.95) : Qt.rgba(0.28, 0.17, 0.16, 0.95)
+                                    border.color: Qt.rgba(1, 1, 1, 0.05)
 
-                            Column {
-                                anchors.fill: parent
-                                anchors.margins: 10
-                                spacing: 3
-                                Text { text: modelData.time + "  |  " + modelData.type + "  |  " + modelData.result; color: "#f5f8fb"; font.pixelSize: 12; font.bold: true }
-                                Text { text: "Target: " + modelData.targetInstanceId + "  |  " + modelData.summary; color: "#dce5f0"; font.pixelSize: 11; wrapMode: Text.WordWrap }
+                                    Column {
+                                        anchors.fill: parent
+                                        anchors.margins: 10
+                                        spacing: 3
+                                        Text { text: modelData.time + "  |  " + modelData.type + "  |  " + modelData.sourceType + "  |  " + modelData.result; color: "#f5f8fb"; font.pixelSize: 12; font.bold: true }
+                                        Text { text: "Target: " + modelData.targetInstanceId + "  |  " + modelData.summary; color: "#dce5f0"; font.pixelSize: 11; wrapMode: Text.WordWrap }
+                                    }
+                                }
                             }
-                        }
-                    }
                 }
             }
 

@@ -209,6 +209,10 @@ TEST(AppViewModel, ExecuteRepairPlanReportsStatusAndLogs) {
     }));
     EXPECT_GE(viewModel.taskCount(), 1);
 
+    const auto installLogs = viewModel.installLogs();
+    ASSERT_FALSE(installLogs.isEmpty());
+    EXPECT_EQ(installLogs.front().toMap().value("sourceType").toString(), QStringLiteral("repair"));
+
     std::filesystem::remove_all(root);
 }
 
@@ -290,6 +294,7 @@ TEST(AppViewModel, HandleDroppedFileInstallsLocalModAndExposesResult) {
     const auto installLogs = viewModel.installLogs();
     ASSERT_EQ(installLogs.size(), 1);
     EXPECT_EQ(installLogs.front().toMap().value("type").toString(), QStringLiteral("drag-install"));
+    EXPECT_EQ(installLogs.front().toMap().value("sourceType").toString(), QStringLiteral("local_drop"));
     EXPECT_EQ(installLogs.front().toMap().value("result").toString(), QStringLiteral("succeeded"));
     EXPECT_EQ(installLogs.front().toMap().value("targetInstanceId").toString(), QString::fromStdString(instance.id));
 
@@ -303,6 +308,94 @@ TEST(AppViewModel, HandleDroppedFileInstallsLocalModAndExposesResult) {
     viewModel.setInstallLogFilter(QStringLiteral("failure"));
     EXPECT_EQ(viewModel.installLogs().size(), 1);
     EXPECT_FALSE(viewModel.installLogs().front().toMap().value("success").toBool());
+
+    std::filesystem::remove_all(root);
+}
+
+TEST(AppViewModel, InstallLogsClassifySourcesAndCombineFilters) {
+    const auto root = std::filesystem::temp_directory_path() / "dawn-app-view-model-log-filters";
+    std::filesystem::remove_all(root);
+
+    const auto instance = create_instance(root);
+
+    auto provider = std::make_shared<PreviewContentProvider>();
+    provider->items_ = {
+        {
+            "remote-project",
+            "Remote Project",
+            "Selected for remote install",
+            "Dawn",
+            "",
+            "2026-03-22",
+            900,
+            ProjectType::Mod,
+            {"1.20.1"},
+            {LoaderType::Fabric},
+        }
+    };
+
+    ContentVersion remoteVersion;
+    remoteVersion.versionId = "2.0.0";
+    remoteVersion.name = "Remote Build";
+    remoteVersion.fileUrls = {"https://example.invalid/remote-build.jar"};
+    remoteVersion.loaders = {LoaderType::Fabric};
+    remoteVersion.gameVersions = {"1.20.1"};
+    provider->versions_ = {remoteVersion};
+    provider->versionMap_["remote-project"] = {remoteVersion};
+
+    auto client = std::make_shared<dawn::infra::net::FakeHttpClient>();
+    client->push_response(dawn::infra::net::HttpResponse{200, {}, "remote build payload"});
+
+    AppViewModel viewModel(QString::fromStdString(root.string()), provider, client);
+
+    EXPECT_TRUE(viewModel.searchContent("remote", "mod"));
+    EXPECT_TRUE(viewModel.selectTargetInstance(QString::fromStdString(instance.id)));
+    EXPECT_TRUE(viewModel.selectInstallVersion("2.0.0"));
+    EXPECT_TRUE(viewModel.installSelectedContent());
+
+    const auto modPath = root / "drop" / "local-mod.jar";
+    std::string error;
+    ASSERT_TRUE(dawn::infra::fs::write_binary_file(modPath, "fabric.mod.json", &error)) << error;
+    const auto localDropResult = viewModel.handleDroppedFile(
+        QString::fromStdString(modPath.string()),
+        QString::fromStdString(instance.id));
+    EXPECT_TRUE(localDropResult.value("success").toBool());
+
+    EXPECT_FALSE(viewModel.executeRepairPlan(QStringLiteral("missing")));
+
+    const auto logs = viewModel.installLogs();
+    ASSERT_EQ(logs.size(), 3);
+
+    EXPECT_EQ(logs[0].toMap().value("sourceType").toString(), QStringLiteral("repair"));
+    EXPECT_EQ(logs[1].toMap().value("sourceType").toString(), QStringLiteral("local_drop"));
+    EXPECT_EQ(logs[2].toMap().value("sourceType").toString(), QStringLiteral("remote_content"));
+
+    viewModel.setInstallLogFilter(QStringLiteral("success"));
+    viewModel.setInstallLogSourceFilter(QStringLiteral("local_drop"));
+    auto filtered = viewModel.installLogs();
+    ASSERT_EQ(filtered.size(), 1);
+    EXPECT_EQ(filtered.front().toMap().value("sourceType").toString(), QStringLiteral("local_drop"));
+    EXPECT_TRUE(filtered.front().toMap().value("success").toBool());
+
+    viewModel.setInstallLogFilter(QStringLiteral("success"));
+    viewModel.setInstallLogSourceFilter(QStringLiteral("remote_content"));
+    filtered = viewModel.installLogs();
+    ASSERT_EQ(filtered.size(), 1);
+    EXPECT_EQ(filtered.front().toMap().value("sourceType").toString(), QStringLiteral("remote_content"));
+    EXPECT_TRUE(filtered.front().toMap().value("success").toBool());
+
+    viewModel.setInstallLogFilter(QStringLiteral("failure"));
+    viewModel.setInstallLogSourceFilter(QStringLiteral("repair"));
+    filtered = viewModel.installLogs();
+    ASSERT_EQ(filtered.size(), 1);
+    EXPECT_EQ(filtered.front().toMap().value("sourceType").toString(), QStringLiteral("repair"));
+    EXPECT_FALSE(filtered.front().toMap().value("success").toBool());
+
+    viewModel.setInstallLogFilter(QStringLiteral("failure"));
+    viewModel.setInstallLogSourceFilter(QStringLiteral("all"));
+    filtered = viewModel.installLogs();
+    ASSERT_EQ(filtered.size(), 1);
+    EXPECT_EQ(filtered.front().toMap().value("sourceType").toString(), QStringLiteral("repair"));
 
     std::filesystem::remove_all(root);
 }

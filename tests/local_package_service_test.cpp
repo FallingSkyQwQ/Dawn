@@ -73,14 +73,14 @@ TEST(LocalPackageService, DetectsCommonLocalPackageTypes) {
     const auto resourcepackPath = root / "example-resource.zip";
     const auto shaderPath = root / "example-shader.zip";
     const auto modpackPath = root / "example-pack.mrpack";
-    const auto unknownPath = root / "example-blob.zip";
+    const auto unknownPath = root / "example-blob.txt";
 
     std::string error;
     ASSERT_TRUE(dawn::infra::fs::write_binary_file(modPath, make_fake_zip({"fabric.mod.json", "assets/example/lang/en_us.json"}), &error)) << error;
     ASSERT_TRUE(dawn::infra::fs::write_binary_file(resourcepackPath, make_fake_zip({"pack.mcmeta", "assets/minecraft/textures/block.png"}), &error)) << error;
     ASSERT_TRUE(dawn::infra::fs::write_binary_file(shaderPath, make_fake_zip({"shaders.properties", "shaders/program/example.fsh"}), &error)) << error;
     ASSERT_TRUE(dawn::infra::fs::write_binary_file(modpackPath, make_fake_zip({"modrinth.index.json", "overrides/config/example.txt"}), &error)) << error;
-    ASSERT_TRUE(dawn::infra::fs::write_binary_file(unknownPath, make_fake_zip({"docs/readme.txt", "assets/random.bin"}), &error)) << error;
+    ASSERT_TRUE(dawn::infra::fs::write_binary_file(unknownPath, "plain text content", &error)) << error;
 
     LocalPackageService service;
 
@@ -110,9 +110,9 @@ TEST(LocalPackageService, DetectsCommonLocalPackageTypes) {
 
     const auto unknown = service.analyze(unknownPath);
     EXPECT_EQ(unknown.type, LocalPackageType::Unknown);
-    EXPECT_FALSE(unknown.archiveEntries.empty());
+    EXPECT_FALSE(unknown.archive);
+    EXPECT_TRUE(unknown.archiveEntries.empty());
     EXPECT_TRUE(unknown.reasons.empty() || !unknown.reasons.front().empty());
 
     std::filesystem::remove_all(root);
 }
-

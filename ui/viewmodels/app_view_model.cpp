@@ -252,11 +252,15 @@ QVariantList AppViewModel::installLogs() const {
     QVariantList logs;
     for (auto it = installLogs_.rbegin(); it != installLogs_.rend(); ++it) {
         const auto& entry = *it;
-        const auto filter = installLogFilter_.toLower();
-        if (filter == QStringLiteral("success") && !entry.success) {
+        const auto statusFilter = installLogFilter_.toLower();
+        const auto sourceFilter = installLogSourceFilter_.toLower();
+        if (statusFilter == QStringLiteral("success") && !entry.success) {
             continue;
         }
-        if (filter == QStringLiteral("failure") && entry.success) {
+        if (statusFilter == QStringLiteral("failure") && entry.success) {
+            continue;
+        }
+        if (sourceFilter != QStringLiteral("all") && entry.sourceType.toLower() != sourceFilter) {
             continue;
         }
         logs.push_back(installLogToVariant(entry));
@@ -268,12 +272,20 @@ QString AppViewModel::installLogFilter() const {
     return installLogFilter_;
 }
 
+QString AppViewModel::installLogSourceFilter() const {
+    return installLogSourceFilter_;
+}
+
 QVariantList AppViewModel::repairExecutionLogs() const {
     QVariantList logs;
     for (const auto& log : repairExecutionLogs_) {
         logs.push_back(to_qstring(log));
     }
     return logs;
+}
+
+QString AppViewModel::contentInstallStatus() const {
+    return contentInstallStatus_;
 }
 
 QVariantMap AppViewModel::lastDroppedFileResult() const {
@@ -508,6 +520,39 @@ bool AppViewModel::selectInstallVersion(const QString& versionId) {
     return true;
 }
 
+bool AppViewModel::installSelectedContent() {
+    const auto request = currentInstallRequest();
+    if (!request.has_value()) {
+        contentInstallStatus_ = QStringLiteral("No install request selected");
+        recordInstallLog(QStringLiteral("remote-install"), QStringLiteral("remote_content"), activeInstanceId(), false, contentInstallStatus_, QStringLiteral("not-configured"));
+        emit dataChanged();
+        return false;
+    }
+
+    if (!contentProvider_) {
+        contentProvider_ = std::make_shared<dawn::core::ModrinthProvider>();
+    }
+
+    const auto result = contentInstallService_.install(*request, *contentProvider_, &taskQueue_);
+    contentInstallStatus_ = to_qstring(result.message.empty() ? (result.success ? "Content install completed" : "Content install failed") : result.message);
+    installDiagnostics_ = result.diagnostics;
+    rollbackEvents_ = result.rollbackEvents;
+    repairExecutionLogs_ = result.logs;
+    if (result.success) {
+        refreshInstallPreview();
+    }
+
+    recordInstallLog(
+        QStringLiteral("remote-install"),
+        QStringLiteral("remote_content"),
+        to_qstring(request->instanceId),
+        result.success,
+        contentInstallStatus_,
+        result.success ? QStringLiteral("success") : QStringLiteral("failed"));
+    emit dataChanged();
+    return result.success;
+}
+
 void AppViewModel::refreshInstallPreview() {
     installDiagnostics_.clear();
     rollbackEvents_.clear();
@@ -569,6 +614,16 @@ void AppViewModel::setInstallLogFilter(const QString& filter) {
     emit dataChanged();
 }
 
+void AppViewModel::setInstallLogSourceFilter(const QString& filter) {
+    const auto normalized = filter.trimmed().toLower();
+    const auto next = normalized.isEmpty() ? QStringLiteral("all") : normalized;
+    if (installLogSourceFilter_ == next) {
+        return;
+    }
+    installLogSourceFilter_ = next;
+    emit dataChanged();
+}
+
 bool AppViewModel::nextWizardStep() {
     if (settings_.firstLaunchCompleted) {
         return false;
@@ -607,7 +662,7 @@ bool AppViewModel::executeRepairPlan(const QString& planId) {
     }
     repairExecutionStatus_ = QStringLiteral("Repair plan not found");
     repairExecutionLogs_.clear();
-    recordInstallLog(QStringLiteral("repair"), selectedTargetInstanceId(), false, repairExecutionStatus_, QStringLiteral("not-found"));
+        recordInstallLog(QStringLiteral("repair"), QStringLiteral("repair"), selectedTargetInstanceId(), false, repairExecutionStatus_, QStringLiteral("not-found"));
     emit dataChanged();
     return false;
 }
@@ -616,7 +671,7 @@ bool AppViewModel::executeRepairPlan(int planIndex) {
     if (planIndex != 0) {
         repairExecutionStatus_ = QStringLiteral("Repair plan not available");
         repairExecutionLogs_.clear();
-        recordInstallLog(QStringLiteral("repair"), selectedTargetInstanceId(), false, repairExecutionStatus_, QStringLiteral("not-available"));
+        recordInstallLog(QStringLiteral("repair"), QStringLiteral("repair"), selectedTargetInstanceId(), false, repairExecutionStatus_, QStringLiteral("not-available"));
         emit dataChanged();
         return false;
     }
@@ -625,7 +680,7 @@ bool AppViewModel::executeRepairPlan(int planIndex) {
     if (!request.has_value()) {
         repairExecutionStatus_ = QStringLiteral("No install request selected");
         repairExecutionLogs_.clear();
-        recordInstallLog(QStringLiteral("repair"), selectedTargetInstanceId(), false, repairExecutionStatus_, QStringLiteral("not-configured"));
+        recordInstallLog(QStringLiteral("repair"), QStringLiteral("repair"), selectedTargetInstanceId(), false, repairExecutionStatus_, QStringLiteral("not-configured"));
         emit dataChanged();
         return false;
     }
@@ -653,6 +708,7 @@ bool AppViewModel::executeRepairPlan(int planIndex) {
     installDiagnostics_ = diagnostics;
     repairExecutionStatus_ = to_qstring(result.message.empty() ? (result.success ? "Repair completed" : "Repair failed") : result.message);
     recordInstallLog(
+        QStringLiteral("repair"),
         QStringLiteral("repair"),
         to_qstring(request->instanceId),
         result.success,
@@ -697,7 +753,7 @@ QVariantMap AppViewModel::handleDroppedFile(const QString& path, const QString& 
         result.insert("failureReason", QStringLiteral("ZIP structure did not match a known mod, resource pack, shader, or modpack layout"));
         result.insert("logs", QVariantList{QStringLiteral("local package analysis failed")});
         lastDroppedFileResult_ = result;
-        recordInstallLog(QStringLiteral("drag-install"), resolvedInstanceId, false, QStringLiteral("local package analysis failed"), QStringLiteral("unknown"));
+        recordInstallLog(QStringLiteral("drag-install"), QStringLiteral("local_drop"), resolvedInstanceId, false, QStringLiteral("local package analysis failed"), QStringLiteral("unknown"));
         emit dataChanged();
         return result;
     }
@@ -736,6 +792,7 @@ QVariantMap AppViewModel::handleDroppedFile(const QString& path, const QString& 
 
     recordInstallLog(
         QStringLiteral("drag-install"),
+        QStringLiteral("local_drop"),
         resolvedInstanceId,
         installResult.success,
         installResult.message.empty() ? result.value("detectedType").toString() : to_qstring(installResult.message),
@@ -847,10 +904,11 @@ void AppViewModel::refreshDiskStatus() {
     }
 }
 
-void AppViewModel::recordInstallLog(const QString& type, const QString& targetInstanceId, bool success, const QString& summary, const QString& result) {
+void AppViewModel::recordInstallLog(const QString& type, const QString& sourceType, const QString& targetInstanceId, bool success, const QString& summary, const QString& result) {
     InstallLogEntry entry;
     entry.time = current_timestamp_text();
     entry.type = type;
+    entry.sourceType = sourceType;
     entry.targetInstanceId = targetInstanceId;
     entry.success = success;
     entry.summary = summary;
@@ -1103,6 +1161,7 @@ QVariantMap AppViewModel::installLogToVariant(const InstallLogEntry& entry) cons
     return QVariantMap{
         {"time", entry.time},
         {"type", entry.type},
+        {"sourceType", entry.sourceType},
         {"targetInstanceId", entry.targetInstanceId},
         {"result", entry.result},
         {"summary", entry.summary},

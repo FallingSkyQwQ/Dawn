@@ -141,6 +141,25 @@ Item {
                         font.pixelSize: 13
                         wrapMode: Text.WordWrap
                     }
+
+                    RowLayout {
+                        Layout.fillWidth: true
+                        spacing: 10
+
+                        Button {
+                            text: "Install Selected"
+                            enabled: !root.appViewModel.installPreview.blocked && root.appViewModel.selectedContentProjectId.length > 0 && root.appViewModel.selectedContentVersionId.length > 0
+                            onClicked: root.appViewModel.installSelectedContent()
+                        }
+
+                        Text {
+                            Layout.fillWidth: true
+                            text: root.appViewModel.contentInstallStatus
+                            color: "#dce5f0"
+                            font.pixelSize: 12
+                            wrapMode: Text.WordWrap
+                        }
+                    }
                 }
             }
 
@@ -308,6 +327,82 @@ Item {
                                 color: "#8ea0b7"
                                 font.pixelSize: 12
                                 wrapMode: Text.WordWrap
+                            }
+                        }
+                    }
+
+                    DawnCard {
+                        Layout.fillWidth: true
+                        Layout.preferredHeight: 320
+                        title: "Install History"
+                        subtitle: "Unified history for local drops, remote content installs, and repairs."
+
+                        Column {
+                            anchors.fill: parent
+                            spacing: 10
+
+                            RowLayout {
+                                width: parent.width
+                                spacing: 10
+
+                                ComboBox {
+                                    Layout.preferredWidth: 150
+                                    textRole: "label"
+                                    valueRole: "value"
+                                    model: [
+                                        { "label": "All", "value": "all" },
+                                        { "label": "Success", "value": "success" },
+                                        { "label": "Failure", "value": "failure" }
+                                    ]
+                                    currentIndex: root.appViewModel.installLogFilter === "success" ? 1 : (root.appViewModel.installLogFilter === "failure" ? 2 : 0)
+                                    onActivated: root.appViewModel.setInstallLogFilter(currentValue)
+                                }
+
+                                ComboBox {
+                                    Layout.preferredWidth: 190
+                                    textRole: "label"
+                                    valueRole: "value"
+                                    model: [
+                                        { "label": "All Sources", "value": "all" },
+                                        { "label": "Local Drop", "value": "local_drop" },
+                                        { "label": "Remote Content", "value": "remote_content" },
+                                        { "label": "Repair", "value": "repair" }
+                                    ]
+                                    currentIndex: root.appViewModel.installLogSourceFilter === "local_drop" ? 1 : (root.appViewModel.installLogSourceFilter === "remote_content" ? 2 : (root.appViewModel.installLogSourceFilter === "repair" ? 3 : 0))
+                                    onActivated: root.appViewModel.setInstallLogSourceFilter(currentValue)
+                                }
+
+                                Item { Layout.fillWidth: true }
+
+                                Text {
+                                    text: root.appViewModel.installLogs.length + " entries"
+                                    color: "#8ea0b7"
+                                    font.pixelSize: 11
+                                }
+                            }
+
+                            ListView {
+                                width: parent.width
+                                height: 230
+                                clip: true
+                                spacing: 8
+                                model: root.appViewModel.installLogs
+
+                                delegate: Rectangle {
+                                    width: ListView.view.width
+                                    height: 74
+                                    radius: 12
+                                    color: modelData.success ? Qt.rgba(0.14, 0.24, 0.18, 0.95) : Qt.rgba(0.28, 0.17, 0.16, 0.95)
+                                    border.color: Qt.rgba(1, 1, 1, 0.05)
+
+                                    Column {
+                                        anchors.fill: parent
+                                        anchors.margins: 10
+                                        spacing: 3
+                                        Text { text: modelData.time + "  |  " + modelData.type + "  |  " + modelData.sourceType + "  |  " + modelData.result; color: "#f5f8fb"; font.pixelSize: 12; font.bold: true }
+                                        Text { text: "Target: " + modelData.targetInstanceId + "  |  " + modelData.summary; color: "#dce5f0"; font.pixelSize: 11; wrapMode: Text.WordWrap }
+                                    }
+                                }
                             }
                         }
                     }
