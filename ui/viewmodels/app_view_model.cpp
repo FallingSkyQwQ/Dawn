@@ -5,6 +5,7 @@
 #include "dawn/infra/net/http_client.h"
 
 #include <algorithm>
+#include <cstdint>
 #include <filesystem>
 #include <memory>
 #include <system_error>
@@ -71,6 +72,34 @@ QVariantList loaders_to_variant_list(const std::vector<dawn::core::LoaderType>& 
         list.push_back(to_qstring(std::string(dawn::core::to_string(value))));
     }
     return list;
+}
+
+QString format_bytes(std::uintmax_t bytes) {
+    static constexpr const char* kUnits[] = {"B", "KiB", "MiB", "GiB", "TiB"};
+    double value = static_cast<double>(bytes);
+    int unit = 0;
+    while (value >= 1024.0 && unit < 4) {
+        value /= 1024.0;
+        ++unit;
+    }
+    const auto precision = unit == 0 ? 0 : 2;
+    return QStringLiteral("%1 %2")
+        .arg(QString::number(value, 'f', precision))
+        .arg(QString::fromLatin1(kUnits[unit]));
+}
+
+QString java_strategy_text(dawn::core::JavaStrategy strategy) {
+    switch (strategy) {
+    case dawn::core::JavaStrategy::Auto:
+        return QStringLiteral("auto");
+    case dawn::core::JavaStrategy::Bundled:
+        return QStringLiteral("bundled");
+    case dawn::core::JavaStrategy::CustomPath:
+        return QStringLiteral("custom-path");
+    case dawn::core::JavaStrategy::Downloaded:
+        return QStringLiteral("downloaded");
+    }
+    return QStringLiteral("auto");
 }
 
 } // namespace
@@ -207,6 +236,49 @@ QVariantList AppViewModel::repairExecutionLogs() const {
     return logs;
 }
 
+QVariantList AppViewModel::wizardSteps() const {
+    QVariantList steps;
+    const auto total = 4;
+    for (int index = 0; index < total; ++index) {
+        const bool active = index == wizardStepIndex_;
+        const bool completed = index < wizardStepIndex_ || settings_.firstLaunchCompleted;
+        QString title;
+        QString summary;
+        switch (index) {
+        case 0:
+            title = QStringLiteral("Welcome");
+            summary = QStringLiteral("Confirm the launcher context and setup flow.");
+            break;
+        case 1:
+            title = QStringLiteral("Data Path");
+            summary = QStringLiteral("Review the data root and cache location.");
+            break;
+        case 2:
+            title = QStringLiteral("Java Strategy");
+            summary = QStringLiteral("Choose how Dawn should resolve Java.");
+            break;
+        case 3:
+            title = QStringLiteral("Finish");
+            summary = QStringLiteral("Seal the initial setup and enter the shell.");
+            break;
+        default:
+            break;
+        }
+        steps.push_back(QVariantMap{
+            {"index", index},
+            {"title", title},
+            {"summary", summary},
+            {"active", active},
+            {"completed", completed},
+        });
+    }
+    return steps;
+}
+
+int AppViewModel::wizardStepIndex() const {
+    return wizardStepIndex_;
+}
+
 QString AppViewModel::installPreviewStatus() const {
     return installPreviewStatus_;
 }
@@ -225,6 +297,15 @@ bool AppViewModel::firstLaunchVisible() const {
 
 QString AppViewModel::uiMode() const {
     return to_qstring(std::string(dawn::core::to_string(settings_.uiMode)));
+}
+
+QString AppViewModel::javaStrategy() const {
+    return java_strategy_text(settings_.javaStrategy);
+}
+
+QString AppViewModel::cachePath() const {
+    const auto path = settings_.cachePath.empty() ? settingsService_.defaults().cachePath : settings_.cachePath;
+    return to_qstring(path.generic_string());
 }
 
 int AppViewModel::lowDiskThresholdGb() const {
@@ -434,6 +515,31 @@ void AppViewModel::refreshInstallPreview() {
     emit dataChanged();
 }
 
+bool AppViewModel::nextWizardStep() {
+    if (settings_.firstLaunchCompleted) {
+        return false;
+    }
+    const auto totalSteps = 4;
+    if (wizardStepIndex_ >= totalSteps - 1) {
+        return false;
+    }
+    ++wizardStepIndex_;
+    emit dataChanged();
+    return true;
+}
+
+bool AppViewModel::previousWizardStep() {
+    if (settings_.firstLaunchCompleted) {
+        return false;
+    }
+    if (wizardStepIndex_ <= 0) {
+        return false;
+    }
+    --wizardStepIndex_;
+    emit dataChanged();
+    return true;
+}
+
 bool AppViewModel::executeRepairPlan() {
     return executeRepairPlan(0);
 }
@@ -499,6 +605,7 @@ bool AppViewModel::completeFirstLaunch() {
     }
 
     settings_.firstLaunchCompleted = true;
+    wizardStepIndex_ = 0;
     persistSettings();
     return true;
 }
@@ -511,6 +618,20 @@ void AppViewModel::setUiMode(const QString& mode) {
     }
 
     settings_.uiMode = newMode;
+    persistSettings();
+}
+
+void AppViewModel::setJavaStrategy(const QString& strategy) {
+    const auto requested = to_std(strategy);
+    const auto parsed = requested == "bundled" ? dawn::core::JavaStrategy::Bundled
+                     : requested == "custom-path" ? dawn::core::JavaStrategy::CustomPath
+                     : requested == "downloaded" ? dawn::core::JavaStrategy::Downloaded
+                     : dawn::core::JavaStrategy::Auto;
+    if (settings_.javaStrategy == parsed) {
+        return;
+    }
+
+    settings_.javaStrategy = parsed;
     persistSettings();
 }
 
@@ -831,6 +952,9 @@ QVariantMap AppViewModel::diskStatusToVariant(const dawn::core::DiskSpaceCheckRe
         {"path", to_qstring(result.path.generic_string())},
         {"availableBytes", QVariant::fromValue<qulonglong>(static_cast<qulonglong>(result.availableBytes))},
         {"thresholdBytes", QVariant::fromValue<qulonglong>(static_cast<qulonglong>(result.thresholdBytes))},
+        {"availableDisplay", format_bytes(result.availableBytes)},
+        {"thresholdDisplay", format_bytes(result.thresholdBytes)},
+        {"statusLabel", result.low ? QStringLiteral("warning") : QStringLiteral("ok")},
         {"message", to_qstring(result.message)},
     };
 }
@@ -844,7 +968,13 @@ QVariantMap AppViewModel::cacheCleanupToVariant(const dawn::core::CacheCleanupRe
     return QVariantMap{
         {"success", result.success},
         {"path", to_qstring(result.cachePath.generic_string())},
+        {"bytesBefore", QVariant::fromValue<qulonglong>(static_cast<qulonglong>(result.bytesBefore))},
+        {"bytesAfter", QVariant::fromValue<qulonglong>(static_cast<qulonglong>(result.bytesAfter))},
         {"bytesFreed", QVariant::fromValue<qulonglong>(static_cast<qulonglong>(result.bytesFreed))},
+        {"bytesBeforeDisplay", format_bytes(result.bytesBefore)},
+        {"bytesAfterDisplay", format_bytes(result.bytesAfter)},
+        {"bytesFreedDisplay", format_bytes(result.bytesFreed)},
+        {"statusLabel", result.message.empty() ? QStringLiteral("idle") : (result.success ? QStringLiteral("success") : QStringLiteral("failed"))},
         {"filesRemoved", QVariant::fromValue<qulonglong>(static_cast<qulonglong>(result.filesRemoved))},
         {"directoriesRemoved", QVariant::fromValue<qulonglong>(static_cast<qulonglong>(result.directoriesRemoved))},
         {"message", to_qstring(result.message)},

@@ -81,6 +81,8 @@ TEST(GlobalSettingsService, CleansCacheAndReportsSummary) {
     EXPECT_TRUE(error.empty());
     EXPECT_TRUE(result.success);
     EXPECT_EQ(result.cachePath, cache);
+    EXPECT_EQ(result.bytesBefore, 8u);
+    EXPECT_EQ(result.bytesAfter, 0u);
     EXPECT_EQ(result.bytesFreed, 8u);
     EXPECT_EQ(result.filesRemoved, 2u);
     EXPECT_FALSE(std::filesystem::exists(cache / "alpha.bin"));

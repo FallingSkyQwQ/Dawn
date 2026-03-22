@@ -157,6 +157,78 @@ Item {
                 }
             }
 
+            DawnCard {
+                Layout.fillWidth: true
+                Layout.preferredHeight: 210
+                title: "Storage Status"
+                subtitle: "Disk availability and cache maintenance summary."
+
+                Column {
+                    anchors.fill: parent
+                    spacing: 10
+
+                    RowLayout {
+                        width: parent.width
+                        spacing: 14
+
+                        Column {
+                            Layout.fillWidth: true
+                            spacing: 4
+                            Text { text: "Probe path"; color: "#8ea0b7"; font.pixelSize: 11 }
+                            Text { text: appViewModel.diskSpaceStatus.path; color: "#f5f8fb"; font.pixelSize: 13; wrapMode: Text.WordWrap }
+                        }
+
+                        Column {
+                            Layout.fillWidth: true
+                            spacing: 4
+                            Text { text: "Available"; color: "#8ea0b7"; font.pixelSize: 11 }
+                            Text { text: appViewModel.diskSpaceStatus.availableDisplay; color: "#f5f8fb"; font.pixelSize: 13 }
+                        }
+
+                        Column {
+                            Layout.fillWidth: true
+                            spacing: 4
+                            Text { text: "Threshold"; color: "#8ea0b7"; font.pixelSize: 11 }
+                            Text { text: appViewModel.diskSpaceStatus.thresholdDisplay; color: "#f5f8fb"; font.pixelSize: 13 }
+                        }
+
+                        Column {
+                            Layout.fillWidth: true
+                            spacing: 4
+                            Text { text: "State"; color: "#8ea0b7"; font.pixelSize: 11 }
+                            Text { text: appViewModel.diskSpaceStatus.statusLabel; color: appViewModel.diskSpaceStatus.low ? "#f2c5ba" : "#9ce3b6"; font.pixelSize: 13; font.bold: true }
+                        }
+                    }
+
+                    Rectangle {
+                        width: parent.width
+                        height: 1
+                        color: Qt.rgba(1, 1, 1, 0.06)
+                    }
+
+                    Column {
+                        spacing: 4
+                        Text {
+                            text: "Last cache cleanup"
+                            color: "#8ea0b7"
+                            font.pixelSize: 11
+                        }
+                        Text {
+                            text: appViewModel.cacheCleanupSummary.statusLabel + "  |  before " + appViewModel.cacheCleanupSummary.bytesBeforeDisplay + "  ->  after " + appViewModel.cacheCleanupSummary.bytesAfterDisplay + "  |  freed " + appViewModel.cacheCleanupSummary.bytesFreedDisplay
+                            color: "#f5f8fb"
+                            font.pixelSize: 13
+                            wrapMode: Text.WordWrap
+                        }
+                        Text {
+                            text: appViewModel.cacheCleanupSummary.message.length > 0 ? appViewModel.cacheCleanupSummary.message : "No cleanup has been executed in this session."
+                            color: "#8ea0b7"
+                            font.pixelSize: 12
+                            wrapMode: Text.WordWrap
+                        }
+                    }
+                }
+            }
+
             RowLayout {
                 Layout.fillWidth: true
                 spacing: 16

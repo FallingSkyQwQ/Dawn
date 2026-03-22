@@ -39,11 +39,15 @@ class AppViewModel final : public QObject {
     Q_PROPERTY(QVariantList installDiagnostics READ installDiagnostics NOTIFY dataChanged)
     Q_PROPERTY(QVariantList rollbackEvents READ rollbackEvents NOTIFY dataChanged)
     Q_PROPERTY(QVariantList repairExecutionLogs READ repairExecutionLogs NOTIFY dataChanged)
+    Q_PROPERTY(QVariantList wizardSteps READ wizardSteps NOTIFY dataChanged)
+    Q_PROPERTY(int wizardStepIndex READ wizardStepIndex NOTIFY dataChanged)
     Q_PROPERTY(QString installPreviewStatus READ installPreviewStatus NOTIFY dataChanged)
     Q_PROPERTY(QString repairExecutionStatus READ repairExecutionStatus NOTIFY dataChanged)
     Q_PROPERTY(bool firstLaunchCompleted READ firstLaunchCompleted NOTIFY dataChanged)
     Q_PROPERTY(bool firstLaunchVisible READ firstLaunchVisible NOTIFY dataChanged)
     Q_PROPERTY(QString uiMode READ uiMode WRITE setUiMode NOTIFY dataChanged)
+    Q_PROPERTY(QString javaStrategy READ javaStrategy NOTIFY dataChanged)
+    Q_PROPERTY(QString cachePath READ cachePath NOTIFY dataChanged)
     Q_PROPERTY(int lowDiskThresholdGb READ lowDiskThresholdGb WRITE setLowDiskThresholdGb NOTIFY dataChanged)
     Q_PROPERTY(QString lowDiskWarning READ lowDiskWarning NOTIFY dataChanged)
     Q_PROPERTY(QVariantMap diskSpaceStatus READ diskSpaceStatus NOTIFY dataChanged)
@@ -74,11 +78,15 @@ public:
     [[nodiscard]] QVariantList installDiagnostics() const;
     [[nodiscard]] QVariantList rollbackEvents() const;
     [[nodiscard]] QVariantList repairExecutionLogs() const;
+    [[nodiscard]] QVariantList wizardSteps() const;
+    [[nodiscard]] int wizardStepIndex() const;
     [[nodiscard]] QString installPreviewStatus() const;
     [[nodiscard]] QString repairExecutionStatus() const;
     [[nodiscard]] bool firstLaunchCompleted() const;
     [[nodiscard]] bool firstLaunchVisible() const;
     [[nodiscard]] QString uiMode() const;
+    [[nodiscard]] QString javaStrategy() const;
+    [[nodiscard]] QString cachePath() const;
     [[nodiscard]] int lowDiskThresholdGb() const;
     [[nodiscard]] QString lowDiskWarning() const;
     [[nodiscard]] QVariantMap diskSpaceStatus() const;
@@ -100,11 +108,14 @@ public:
     Q_INVOKABLE bool selectTargetInstance(const QString& instanceId);
     Q_INVOKABLE bool selectInstallVersion(const QString& versionId);
     Q_INVOKABLE void refreshInstallPreview();
+    Q_INVOKABLE bool nextWizardStep();
+    Q_INVOKABLE bool previousWizardStep();
     Q_INVOKABLE bool executeRepairPlan();
     Q_INVOKABLE bool executeRepairPlan(const QString& planId);
     Q_INVOKABLE bool executeRepairPlan(int planIndex);
     Q_INVOKABLE bool completeFirstLaunch();
     Q_INVOKABLE void setUiMode(const QString& mode);
+    Q_INVOKABLE void setJavaStrategy(const QString& strategy);
     Q_INVOKABLE void setLowDiskThresholdGb(int thresholdGb);
     Q_INVOKABLE bool clearCache();
     Q_INVOKABLE QVariantMap preflightFor(const QString& instanceId) const;
@@ -160,6 +171,7 @@ private:
     dawn::core::DependencyCheckResult installPreview_;
     QString installPreviewStatus_ = QStringLiteral("No install preview run");
     QString repairExecutionStatus_ = QStringLiteral("No repair run");
+    int wizardStepIndex_ = 0;
     QString selectedContentProjectId_;
     QString selectedContentVersionId_;
     std::vector<dawn::core::InstanceManifest> instances_;

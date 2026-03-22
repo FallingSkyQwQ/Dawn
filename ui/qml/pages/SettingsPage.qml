@@ -81,7 +81,7 @@ Item {
                     Layout.fillWidth: true
                     Layout.preferredHeight: 190
                     title: "First Launch"
-                    subtitle: "Keep the onboarding card visible until setup is complete."
+                    subtitle: "Track onboarding completion after the wizard flow."
 
                     Column {
                         anchors.fill: parent
@@ -104,7 +104,7 @@ Item {
 
                 DawnCard {
                     Layout.fillWidth: true
-                    Layout.preferredHeight: 220
+                    Layout.preferredHeight: 270
                     title: "Low Disk Threshold"
                     subtitle: "Warn when the data root free space is too low."
 
@@ -145,12 +145,44 @@ Item {
                             font.pixelSize: 12
                             wrapMode: Text.WordWrap
                         }
+
+                        Rectangle {
+                            width: parent.width
+                            height: 1
+                            color: Qt.rgba(1, 1, 1, 0.06)
+                        }
+
+                        RowLayout {
+                            width: parent.width
+                            spacing: 12
+
+                            Column {
+                                Layout.fillWidth: true
+                                spacing: 4
+                                Text { text: "Available"; color: "#8ea0b7"; font.pixelSize: 11 }
+                                Text { text: appViewModel.diskSpaceStatus.availableDisplay; color: "#f5f8fb"; font.pixelSize: 13 }
+                            }
+
+                            Column {
+                                Layout.fillWidth: true
+                                spacing: 4
+                                Text { text: "Threshold"; color: "#8ea0b7"; font.pixelSize: 11 }
+                                Text { text: appViewModel.diskSpaceStatus.thresholdDisplay; color: "#f5f8fb"; font.pixelSize: 13 }
+                            }
+
+                            Column {
+                                Layout.fillWidth: true
+                                spacing: 4
+                                Text { text: "State"; color: "#8ea0b7"; font.pixelSize: 11 }
+                                Text { text: appViewModel.diskSpaceStatus.statusLabel; color: appViewModel.diskSpaceStatus.low ? "#f2c5ba" : "#9ce3b6"; font.pixelSize: 13; font.bold: true }
+                            }
+                        }
                     }
                 }
 
                 DawnCard {
                     Layout.fillWidth: true
-                    Layout.preferredHeight: 220
+                    Layout.preferredHeight: 260
                     title: "Cache Maintenance"
                     subtitle: "Clean the cache directory and inspect the last cleanup summary."
 
@@ -171,7 +203,14 @@ Item {
                         }
 
                         Text {
-                            text: "Freed: " + appViewModel.cacheCleanupSummary.bytesFreed + " bytes  |  Files: " + appViewModel.cacheCleanupSummary.filesRemoved + "  |  Directories: " + appViewModel.cacheCleanupSummary.directoriesRemoved
+                            text: "Before: " + appViewModel.cacheCleanupSummary.bytesBeforeDisplay + "  |  After: " + appViewModel.cacheCleanupSummary.bytesAfterDisplay + "  |  Freed: " + appViewModel.cacheCleanupSummary.bytesFreedDisplay
+                            color: "#8ea0b7"
+                            font.pixelSize: 12
+                            wrapMode: Text.WordWrap
+                        }
+
+                        Text {
+                            text: "Files: " + appViewModel.cacheCleanupSummary.filesRemoved + "  |  Directories: " + appViewModel.cacheCleanupSummary.directoriesRemoved + "  |  State: " + appViewModel.cacheCleanupSummary.statusLabel
                             color: "#8ea0b7"
                             font.pixelSize: 12
                             wrapMode: Text.WordWrap

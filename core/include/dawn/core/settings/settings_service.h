@@ -84,6 +84,8 @@ struct DiskSpaceCheckResult {
 struct CacheCleanupResult {
     bool success = false;
     std::filesystem::path cachePath;
+    std::uintmax_t bytesBefore = 0;
+    std::uintmax_t bytesAfter = 0;
     std::uintmax_t bytesFreed = 0;
     std::size_t filesRemoved = 0;
     std::size_t directoriesRemoved = 0;

@@ -91,6 +91,37 @@ std::uintmax_t clamp_threshold_bytes(int thresholdGb) {
     return threshold * kGb;
 }
 
+std::uintmax_t path_size(const std::filesystem::path& path, std::string* error = nullptr) {
+    std::error_code ec;
+    if (!std::filesystem::exists(path, ec)) {
+        if (error) {
+            error->clear();
+        }
+        return 0;
+    }
+
+    if (std::filesystem::is_regular_file(path, ec)) {
+        return dawn::infra::fs::file_size(path, error);
+    }
+
+    std::uintmax_t total = 0;
+    for (const auto& entry : std::filesystem::recursive_directory_iterator(path, ec)) {
+        if (ec) {
+            if (error) {
+                *error = ec.message();
+            }
+            return total;
+        }
+        if (entry.is_regular_file()) {
+            total += dawn::infra::fs::file_size(entry.path(), nullptr);
+        }
+    }
+    if (error) {
+        error->clear();
+    }
+    return total;
+}
+
 Value global_settings_to_json(const GlobalSettings& settings) {
     Value::Object proxy;
     proxy.emplace("enabled", Value(settings.proxy.enabled));
@@ -260,10 +291,12 @@ GlobalSettings SettingsService::defaults() const {
 CacheCleanupResult SettingsService::clean_cache(const std::filesystem::path& cachePath, std::string* error) const {
     CacheCleanupResult result;
     result.cachePath = cachePath;
+    result.bytesBefore = path_size(cachePath, error);
 
     if (cachePath.empty()) {
         result.success = true;
         result.message = "cache path is empty";
+        result.bytesAfter = result.bytesBefore;
         if (error) {
             error->clear();
         }
@@ -274,6 +307,7 @@ CacheCleanupResult SettingsService::clean_cache(const std::filesystem::path& cac
     if (!std::filesystem::exists(cachePath, ec)) {
         result.success = true;
         result.message = "cache directory does not exist";
+        result.bytesAfter = result.bytesBefore;
         if (error) {
             error->clear();
         }
@@ -298,6 +332,7 @@ CacheCleanupResult SettingsService::clean_cache(const std::filesystem::path& cac
         result.success = true;
         result.filesRemoved = 1;
         result.bytesFreed = bytesFreed;
+        result.bytesAfter = 0;
         result.message = "removed cache file";
         if (error) {
             error->clear();
@@ -365,6 +400,8 @@ CacheCleanupResult SettingsService::clean_cache(const std::filesystem::path& cac
     }
 
     result.success = true;
+    result.bytesAfter = 0;
+    result.bytesFreed = result.bytesBefore;
     result.message = "cache cleaned";
     if (error) {
         error->clear();

@@ -1,6 +1,7 @@
 #include "app_view_model.h"
 
 #include "dawn/core/service/instance_service.h"
+#include "dawn/infra/fs/file_system.h"
 
 #include <QCoreApplication>
 
@@ -207,6 +208,55 @@ TEST(AppViewModel, ExecuteRepairPlanReportsStatusAndLogs) {
         return value.toString().contains("repaired dependency: base-lib");
     }));
     EXPECT_GE(viewModel.taskCount(), 1);
+
+    std::filesystem::remove_all(root);
+}
+
+TEST(AppViewModel, FirstLaunchFlowCompletesAndPersists) {
+    const auto root = std::filesystem::temp_directory_path() / "dawn-app-view-model-first-launch";
+    std::filesystem::remove_all(root);
+
+    AppViewModel viewModel(QString::fromStdString(root.string()));
+    EXPECT_TRUE(viewModel.firstLaunchVisible());
+    EXPECT_EQ(viewModel.wizardStepIndex(), 0);
+    ASSERT_GE(viewModel.wizardSteps().size(), 4);
+
+    EXPECT_TRUE(viewModel.nextWizardStep());
+    EXPECT_EQ(viewModel.wizardStepIndex(), 1);
+    EXPECT_TRUE(viewModel.nextWizardStep());
+    EXPECT_EQ(viewModel.wizardStepIndex(), 2);
+    EXPECT_TRUE(viewModel.previousWizardStep());
+    EXPECT_EQ(viewModel.wizardStepIndex(), 1);
+    EXPECT_TRUE(viewModel.completeFirstLaunch());
+    EXPECT_FALSE(viewModel.firstLaunchVisible());
+    EXPECT_TRUE(viewModel.firstLaunchCompleted());
+
+    AppViewModel reopened(QString::fromStdString(root.string()));
+    EXPECT_TRUE(reopened.firstLaunchCompleted());
+    EXPECT_FALSE(reopened.firstLaunchVisible());
+
+    std::filesystem::remove_all(root);
+}
+
+TEST(AppViewModel, CacheCleanupSummaryIsExposed) {
+    const auto root = std::filesystem::temp_directory_path() / "dawn-app-view-model-cache";
+    std::filesystem::remove_all(root);
+
+    std::string error;
+    ASSERT_TRUE(dawn::infra::fs::write_binary_file(root / "cache" / "alpha.bin", "abc", &error)) << error;
+    ASSERT_TRUE(dawn::infra::fs::write_binary_file(root / "cache" / "nested" / "beta.bin", "12345", &error)) << error;
+
+    AppViewModel viewModel(QString::fromStdString(root.string()));
+    EXPECT_TRUE(viewModel.clearCache());
+
+    const auto summary = viewModel.cacheCleanupSummary();
+    EXPECT_EQ(summary.value("statusLabel").toString(), QStringLiteral("success"));
+    EXPECT_EQ(summary.value("bytesBefore").toULongLong(), 8u);
+    EXPECT_EQ(summary.value("bytesAfter").toULongLong(), 0u);
+    EXPECT_EQ(summary.value("bytesFreed").toULongLong(), 8u);
+    EXPECT_EQ(summary.value("bytesBeforeDisplay").toString(), QStringLiteral("8 B"));
+    EXPECT_EQ(summary.value("bytesAfterDisplay").toString(), QStringLiteral("0 B"));
+    EXPECT_FALSE(summary.value("message").toString().isEmpty());
 
     std::filesystem::remove_all(root);
 }
