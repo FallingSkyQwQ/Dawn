@@ -2,8 +2,10 @@
 
 #include <gtest/gtest.h>
 
+#include <chrono>
 #include <filesystem>
 #include <fstream>
+#include <thread>
 
 using namespace dawn::core;
 
@@ -189,6 +191,9 @@ TEST_F(BackupServiceNewApiTest, ListSnapshotsInfo) {
     auto snap1 = service->create_snapshot(instanceId, gameDir, options1, nullptr, &error);
     ASSERT_TRUE(snap1.has_value()) << error;
     
+    // Small delay to ensure unique timestamp
+    std::this_thread::sleep_for(std::chrono::milliseconds(10));
+    
     auto snap2 = service->create_snapshot(instanceId, gameDir, options2, nullptr, &error);
     ASSERT_TRUE(snap2.has_value()) << error;
     
@@ -369,7 +374,7 @@ TEST_F(BackupServiceNewApiTest, CleanupOldSnapshots) {
     std::string error;
     service->configure_auto_backup(instanceId, config, &error);
     
-    // Create 4 snapshots
+    // Create 4 snapshots with small delays to ensure unique timestamps
     for (int i = 1; i <= 4; ++i) {
         SnapshotCreateOptions options;
         options.name = "Snapshot " + std::to_string(i);
@@ -377,6 +382,9 @@ TEST_F(BackupServiceNewApiTest, CleanupOldSnapshots) {
         
         auto snapshot = service->create_snapshot(instanceId, gameDir, options, nullptr, &error);
         ASSERT_TRUE(snapshot.has_value()) << error;
+        
+        // Small delay to ensure unique timestamp
+        std::this_thread::sleep_for(std::chrono::milliseconds(10));
     }
     
     // Cleanup old snapshots

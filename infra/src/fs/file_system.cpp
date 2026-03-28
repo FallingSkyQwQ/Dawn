@@ -12,7 +12,21 @@ bool ensure_directory(const std::filesystem::path& path, std::string* error) {
     }
 
     if (std::filesystem::exists(path, ec)) {
-        if (std::filesystem::is_directory(path, ec)) {
+        if (ec) {
+            if (error) {
+                *error = "failed to check path existence: " + ec.message();
+            }
+            return false;
+        }
+        ec.clear();
+        const bool isDir = std::filesystem::is_directory(path, ec);
+        if (ec) {
+            if (error) {
+                *error = "failed to check path type: " + ec.message();
+            }
+            return false;
+        }
+        if (isDir) {
             return true;
         }
         if (error) {
@@ -21,12 +35,28 @@ bool ensure_directory(const std::filesystem::path& path, std::string* error) {
         return false;
     }
 
+    if (ec) {
+        if (error) {
+            *error = "failed to check path existence: " + ec.message();
+        }
+        return false;
+    }
+
+    ec.clear();
     if (std::filesystem::create_directories(path, ec)) {
         return true;
     }
 
-    if (!ec && std::filesystem::exists(path, ec) && std::filesystem::is_directory(path, ec)) {
-        return true;
+    if (!ec) {
+        ec.clear();
+        const bool exists = std::filesystem::exists(path, ec);
+        if (!ec && exists) {
+            ec.clear();
+            const bool isDir = std::filesystem::is_directory(path, ec);
+            if (!ec && isDir) {
+                return true;
+            }
+        }
     }
 
     if (error) {
