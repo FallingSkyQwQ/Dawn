@@ -9,6 +9,12 @@ Item {
     property var appViewModel
     property bool pendingCacheClear: false
 
+    // Animation durations
+    readonly property int microInteractionDuration: 140  // 120-160ms
+    readonly property int panelSwitchDuration: 200  // 180-220ms
+    readonly property int pageTransitionDuration: 260  // 240-300ms
+    readonly property int staggerDelay: 40
+
     function scheduleDateObject() {
         var text = appViewModel ? appViewModel.backupScheduleDate : ""
         if (!text || text.length === 0) {
@@ -88,6 +94,36 @@ Item {
                 title: "Settings"
                 subtitle: "Theme, windowing, downloads, caching, Java, accounts, and backups."
 
+                // Entry animation
+                Component.onCompleted: {
+                    opacity = 0
+                    y = 20
+                    entryAnimation.start()
+                }
+
+                SequentialAnimation {
+                    id: entryAnimation
+                    PauseAnimation { duration: 0 }
+                    ParallelAnimation {
+                        NumberAnimation {
+                            target: parent
+                            property: "opacity"
+                            from: 0
+                            to: 1
+                            duration: 300
+                            easing.type: Easing.OutCubic
+                        }
+                        NumberAnimation {
+                            target: parent
+                            property: "y"
+                            from: 20
+                            to: 0
+                            duration: 300
+                            easing.type: Easing.OutCubic
+                        }
+                    }
+                }
+
                 Column {
                     anchors.fill: parent
                     spacing: 8
@@ -120,6 +156,36 @@ Item {
                     title: "Experience Mode"
                     subtitle: "Switch between novice and advanced controls."
 
+                    // Entry animation
+                    Component.onCompleted: {
+                        opacity = 0
+                        x = -20
+                        entryAnimationMode.start()
+                    }
+
+                    SequentialAnimation {
+                        id: entryAnimationMode
+                        PauseAnimation { duration: root.staggerDelay }
+                        ParallelAnimation {
+                            NumberAnimation {
+                                target: parent
+                                property: "opacity"
+                                from: 0
+                                to: 1
+                                duration: 300
+                                easing.type: Easing.OutCubic
+                            }
+                            NumberAnimation {
+                                target: parent
+                                property: "x"
+                                from: -20
+                                to: 0
+                                duration: 300
+                                easing.type: Easing.OutCubic
+                            }
+                        }
+                    }
+
                     Column {
                         anchors.fill: parent
                         spacing: 10
@@ -129,6 +195,14 @@ Item {
                             text: appViewModel.uiMode === "advanced" ? "Advanced mode" : "Novice mode"
                             checked: appViewModel.uiMode === "advanced"
                             onCheckedChanged: appViewModel.setUiMode(checked ? "advanced" : "novice")
+
+                            // Toggle animation
+                            Behavior on checked {
+                                NumberAnimation {
+                                    duration: root.microInteractionDuration
+                                    easing.type: Easing.OutCubic
+                                }
+                            }
 
                             FluTooltip {
                                 visible: uiModeSwitch.hovered
@@ -144,6 +218,24 @@ Item {
                             color: "#dce5f0"
                             font.pixelSize: 13
                             wrapMode: Text.WordWrap
+
+                            // Text change animation
+                            Behavior on text {
+                                SequentialAnimation {
+                                    NumberAnimation {
+                                        property: "opacity"
+                                        from: 1
+                                        to: 0
+                                        duration: 80
+                                    }
+                                    NumberAnimation {
+                                        property: "opacity"
+                                        from: 0
+                                        to: 1
+                                        duration: 80
+                                    }
+                                }
+                            }
                         }
                     }
                 }
@@ -179,6 +271,36 @@ Item {
                     title: "Low Disk Threshold"
                     subtitle: "Warn when the data root free space is too low."
 
+                    // Entry animation
+                    Component.onCompleted: {
+                        opacity = 0
+                        x = -20
+                        entryAnimationDisk.start()
+                    }
+
+                    SequentialAnimation {
+                        id: entryAnimationDisk
+                        PauseAnimation { duration: root.staggerDelay * 3 }
+                        ParallelAnimation {
+                            NumberAnimation {
+                                target: parent
+                                property: "opacity"
+                                from: 0
+                                to: 1
+                                duration: 300
+                                easing.type: Easing.OutCubic
+                            }
+                            NumberAnimation {
+                                target: parent
+                                property: "x"
+                                from: -20
+                                to: 0
+                                duration: 300
+                                easing.type: Easing.OutCubic
+                            }
+                        }
+                    }
+
                     Column {
                         anchors.fill: parent
                         spacing: 10
@@ -199,6 +321,15 @@ Item {
                                 implicitWidth: 30
                                 implicitHeight: 28
 
+                                // Hover animation
+                                scale: hovered ? 1.1 : 1.0
+                                Behavior on scale {
+                                    NumberAnimation {
+                                        duration: root.microInteractionDuration
+                                        easing.type: Easing.OutCubic
+                                    }
+                                }
+
                                 FluTooltip {
                                     visible: thresholdHintButton.hovered
                                     delay: 500
@@ -217,11 +348,19 @@ Item {
                         }
 
                         FluFrame {
+                            id: diskStatusFrame
                             width: parent.width
                             implicitHeight: 66
                             radius: 10
                             border.color: Qt.rgba(1, 1, 1, 0.12)
                             color: appViewModel.lowDiskWarning.length > 0 ? Qt.rgba(0.33, 0.18, 0.16, 0.45) : Qt.rgba(1, 1, 1, 0.03)
+
+                            // Color transition animation
+                            Behavior on color {
+                                ColorAnimation {
+                                    duration: root.panelSwitchDuration
+                                }
+                            }
 
                             Column {
                                 anchors.fill: parent
@@ -233,6 +372,24 @@ Item {
                                     color: appViewModel.lowDiskWarning.length > 0 ? "#f2c5ba" : "#dce5f0"
                                     font.pixelSize: 13
                                     wrapMode: Text.WordWrap
+
+                                    // Text change animation
+                                    Behavior on text {
+                                        SequentialAnimation {
+                                            NumberAnimation {
+                                                property: "opacity"
+                                                from: 1
+                                                to: 0
+                                                duration: 100
+                                            }
+                                            NumberAnimation {
+                                                property: "opacity"
+                                                from: 0
+                                                to: 1
+                                                duration: 150
+                                            }
+                                        }
+                                    }
                                 }
 
                                 FluText {
@@ -270,7 +427,20 @@ Item {
                                 Layout.fillWidth: true
                                 spacing: 4
                                 FluText { text: "State"; color: "#8ea0b7"; font.pixelSize: 11 }
-                                FluText { text: appViewModel.diskSpaceStatus.statusLabel; color: appViewModel.diskSpaceStatus.low ? "#f2c5ba" : "#9ce3b6"; font.pixelSize: 13; font.bold: true }
+                                FluText {
+                                    id: stateText
+                                    text: appViewModel.diskSpaceStatus.statusLabel
+                                    color: appViewModel.diskSpaceStatus.low ? "#f2c5ba" : "#9ce3b6"
+                                    font.pixelSize: 13
+                                    font.bold: true
+
+                                    // Color transition animation
+                                    Behavior on color {
+                                        ColorAnimation {
+                                            duration: root.panelSwitchDuration
+                                        }
+                                    }
+                                }
                             }
                         }
                     }
@@ -282,6 +452,36 @@ Item {
                     title: "Cache Maintenance"
                     subtitle: "Clean the cache directory and inspect the last cleanup summary."
 
+                    // Entry animation
+                    Component.onCompleted: {
+                        opacity = 0
+                        x = 20
+                        entryAnimationCache.start()
+                    }
+
+                    SequentialAnimation {
+                        id: entryAnimationCache
+                        PauseAnimation { duration: root.staggerDelay * 4 }
+                        ParallelAnimation {
+                            NumberAnimation {
+                                target: parent
+                                property: "opacity"
+                                from: 0
+                                to: 1
+                                duration: 300
+                                easing.type: Easing.OutCubic
+                            }
+                            NumberAnimation {
+                                target: parent
+                                property: "x"
+                                from: 20
+                                to: 0
+                                duration: 300
+                                easing.type: Easing.OutCubic
+                            }
+                        }
+                    }
+
                     Column {
                         anchors.fill: parent
                         spacing: 10
@@ -291,6 +491,39 @@ Item {
                             text: root.pendingCacheClear ? "Clearing..." : "Clear Cache"
                             enabled: !root.pendingCacheClear
                             onClicked: clearCacheDialog.open()
+
+                            // Hover animation
+                            scale: hovered ? 1.05 : 1.0
+                            Behavior on scale {
+                                NumberAnimation {
+                                    duration: root.microInteractionDuration
+                                    easing.type: Easing.OutCubic
+                                }
+                            }
+
+                            // Click animation
+                            onPressed: {
+                                clickAnimation.start()
+                            }
+
+                            SequentialAnimation {
+                                id: clickAnimation
+                                NumberAnimation {
+                                    target: clearCacheButton
+                                    property: "scale"
+                                    from: 1.0
+                                    to: 0.95
+                                    duration: 50
+                                }
+                                NumberAnimation {
+                                    target: clearCacheButton
+                                    property: "scale"
+                                    from: 0.95
+                                    to: hovered ? 1.05 : 1.0
+                                    duration: 100
+                                    easing.type: Easing.OutBack
+                                }
+                            }
 
                             FluTooltip {
                                 visible: clearCacheButton.hovered

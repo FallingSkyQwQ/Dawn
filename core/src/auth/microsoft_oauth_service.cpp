@@ -6,7 +6,11 @@
 #include <cstddef>
 #include <algorithm>
 #include <sstream>
+#include <thread>
 #include <utility>
+
+// Minecraft Launcher Client ID
+static constexpr const char* MINECRAFT_CLIENT_ID = "00000000402b5328";
 
 namespace dawn::core {
 
@@ -331,6 +335,71 @@ TokenResponse MicrosoftOAuthService::refresh_token(const DeviceCodeRequest& requ
         *error = result.errorMessage;
     }
     return result;
+}
+
+DeviceFlowResult MicrosoftOAuthService::complete_device_flow(
+    const DeviceCodeRequest& request,
+    std::function<void(const std::string& userCode, const std::string& verificationUri)> callback,
+    std::string* error) const {
+
+    DeviceFlowResult result;
+
+    // Step 1: Start device code flow
+    auto deviceCodeResponse = start_device_code_flow(request, error);
+    if (!deviceCodeResponse.ok) {
+        result.errorMessage = deviceCodeResponse.errorMessage;
+        return result;
+    }
+
+    // Notify caller to display user code and verification URI
+    if (callback) {
+        callback(deviceCodeResponse.userCode,
+                 deviceCodeResponse.verificationUriComplete.empty()
+                     ? deviceCodeResponse.verificationUri
+                     : deviceCodeResponse.verificationUriComplete);
+    }
+
+    // Step 2: Poll for token
+    const int expiresIn = deviceCodeResponse.expiresIn > 0 ? deviceCodeResponse.expiresIn : 900;
+    const int interval = deviceCodeResponse.interval > 0 ? deviceCodeResponse.interval : 5;
+    const auto startTime = std::chrono::steady_clock::now();
+
+    while (true) {
+        auto tokenResponse = poll_token(request, deviceCodeResponse.deviceCode, error);
+
+        if (tokenResponse.ok) {
+            result.ok = true;
+            result.accessToken = tokenResponse.accessToken;
+            result.refreshToken = tokenResponse.refreshToken;
+            result.expiresIn = tokenResponse.expiresIn;
+            return result;
+        }
+
+        // Check if error is retryable
+        if (!tokenResponse.retryable) {
+            result.errorMessage = tokenResponse.errorMessage;
+            return result;
+        }
+
+        // Check if expired
+        auto elapsed = std::chrono::duration_cast<std::chrono::seconds>(
+            std::chrono::steady_clock::now() - startTime).count();
+        if (elapsed >= expiresIn) {
+            result.errorMessage = "Device code expired before authentication completed";
+            return result;
+        }
+
+        // Wait before next poll
+        std::this_thread::sleep_for(std::chrono::seconds(interval));
+    }
+}
+
+DeviceCodeRequest MicrosoftOAuthService::create_minecraft_request() {
+    DeviceCodeRequest request;
+    request.tenant = "consumers";
+    request.clientId = MINECRAFT_CLIENT_ID;
+    request.scopes = {"XboxLive.signin", "offline_access"};
+    return request;
 }
 
 } // namespace dawn::core

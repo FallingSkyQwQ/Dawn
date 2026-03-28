@@ -3,6 +3,7 @@ import QtQuick.Controls
 import QtQuick.Layouts
 import FluentUI 1.0
 import "../components"
+import "../dialogs"
 
 Item {
     id: root
@@ -12,6 +13,12 @@ Item {
     property string pendingDeleteAssetType: ""
     property int instanceListPageCurrent: 1
     property int instanceListItemsPerPage: 10
+
+    // Animation durations
+    readonly property int microInteractionDuration: 140  // 120-160ms
+    readonly property int panelSwitchDuration: 200  // 180-220ms
+    readonly property int pageTransitionDuration: 260  // 240-300ms
+    readonly property int staggerDelay: 40
 
     function tabIndex(tabId) {
         var tabs = appViewModel.activeInstanceWorkbench.tabs || []
@@ -195,6 +202,11 @@ Item {
         }
     }
 
+    InstanceCreationWizard {
+        id: instanceCreationWizard
+        appViewModel: root.appViewModel
+    }
+
     function workbenchItemCount(tabId) {
         var key = workbenchAssetKey(tabId)
         if (key.length === 0) {
@@ -312,23 +324,68 @@ Item {
                 title: "Instances"
                 subtitle: "Instance-centered management, launch readiness, and workbench tabs."
 
+                // Entry animation
+                Component.onCompleted: {
+                    opacity = 0
+                    y = 20
+                    entryAnimation.start()
+                }
+
+                SequentialAnimation {
+                    id: entryAnimation
+                    PauseAnimation { duration: 0 }
+                    ParallelAnimation {
+                        NumberAnimation {
+                            target: parent
+                            property: "opacity"
+                            from: 0
+                            to: 1
+                            duration: 300
+                            easing.type: Easing.OutCubic
+                        }
+                        NumberAnimation {
+                            target: parent
+                            property: "y"
+                            from: 20
+                            to: 0
+                            duration: 300
+                            easing.type: Easing.OutCubic
+                        }
+                    }
+                }
+
                 RowLayout {
                     anchors.fill: parent
                     spacing: 12
 
                     FluFilledButton {
-                        text: "Create Vanilla Instance"
-                        onClicked: appViewModel.createInstance("Dawn Vanilla", "1.20.1", "none")
-                    }
+                        id: createInstanceBtn
+                        text: "创建实例"
+                        onClicked: instanceCreationWizard.open()
 
-                    FluFilledButton {
-                        text: "Create Fabric Instance"
-                        onClicked: appViewModel.createInstance("Dawn Fabric", "1.20.1", "fabric")
+                        // Hover animation
+                        scale: hovered ? 1.05 : 1.0
+                        Behavior on scale {
+                            NumberAnimation {
+                                duration: root.microInteractionDuration
+                                easing.type: Easing.OutCubic
+                            }
+                        }
                     }
 
                     FluButton {
+                        id: refreshBtn
                         text: "Refresh"
                         onClicked: appViewModel.refresh()
+
+                        // Hover animation
+                        scale: hovered ? 1.05 : 1.0
+                        Behavior on scale {
+                            NumberAnimation {
+                                duration: root.microInteractionDuration
+                                easing.type: Easing.OutCubic
+                            }
+                        }
                     }
 
                     Item { Layout.fillWidth: true }
@@ -368,6 +425,36 @@ Item {
                 onSourceFilterRequested: function(value) { root.appViewModel.setInstallLogSourceFilter(value) }
                 onTypeFilterRequested: function(value) { root.appViewModel.setEventCenterTypeFilter(value) }
                 onOpenContextRequested: function() { root.appViewModel.navigateToEventContext() }
+
+                // Entry animation
+                Component.onCompleted: {
+                    opacity = 0
+                    y = 20
+                    entryAnimationEvent.start()
+                }
+
+                SequentialAnimation {
+                    id: entryAnimationEvent
+                    PauseAnimation { duration: root.staggerDelay }
+                    ParallelAnimation {
+                        NumberAnimation {
+                            target: parent
+                            property: "opacity"
+                            from: 0
+                            to: 1
+                            duration: 300
+                            easing.type: Easing.OutCubic
+                        }
+                        NumberAnimation {
+                            target: parent
+                            property: "y"
+                            from: 20
+                            to: 0
+                            duration: 300
+                            easing.type: Easing.OutCubic
+                        }
+                    }
+                }
             }
 
             RowLayout {
@@ -380,6 +467,36 @@ Item {
                     title: "Instance List"
                     subtitle: "Click a card to change the active workbench."
 
+                    // Entry animation
+                    Component.onCompleted: {
+                        opacity = 0
+                        x = -30
+                        entryAnimationList.start()
+                    }
+
+                    SequentialAnimation {
+                        id: entryAnimationList
+                        PauseAnimation { duration: root.staggerDelay * 2 }
+                        ParallelAnimation {
+                            NumberAnimation {
+                                target: parent
+                                property: "opacity"
+                                from: 0
+                                to: 1
+                                duration: 300
+                                easing.type: Easing.OutCubic
+                            }
+                            NumberAnimation {
+                                target: parent
+                                property: "x"
+                                from: -30
+                                to: 0
+                                duration: 300
+                                easing.type: Easing.OutCubic
+                            }
+                        }
+                    }
+
                     Component {
                         id: comOpenInstanceAction
                         Item {
@@ -389,6 +506,15 @@ Item {
                                 onClicked: {
                                     if (options && options.instanceId) {
                                         appViewModel.setActiveInstance(options.instanceId)
+                                    }
+                                }
+
+                                // Hover animation
+                                scale: hovered ? 1.1 : 1.0
+                                Behavior on scale {
+                                    NumberAnimation {
+                                        duration: root.microInteractionDuration
+                                        easing.type: Easing.OutCubic
                                     }
                                 }
                             }
@@ -414,6 +540,21 @@ Item {
                                 { "title": "Action", "dataIndex": "openAction", "width": 80 }
                             ]
                             dataSource: root.pagedInstanceTableRows()
+
+                            // Row hover animation
+                            rowDelegate: Rectangle {
+                                color: {
+                                    if (styleData.selected) return Qt.rgba(0.26, 0.37, 0.55, 0.4)
+                                    if (styleData.alternate) return Qt.rgba(1, 1, 1, 0.02)
+                                    return "transparent"
+                                }
+
+                                Behavior on color {
+                                    ColorAnimation {
+                                        duration: root.microInteractionDuration
+                                    }
+                                }
+                            }
                         }
 
                         FluPagination {
@@ -434,6 +575,36 @@ Item {
                     Layout.fillHeight: true
                     title: "Instance Workbench"
                     subtitle: appViewModel.activeInstanceWorkbench.instanceName.length > 0 ? appViewModel.activeInstanceWorkbench.instanceName : "Overview, mods, packs, logs, runtime, and advanced settings."
+
+                    // Entry animation
+                    Component.onCompleted: {
+                        opacity = 0
+                        x = 30
+                        entryAnimationWorkbench.start()
+                    }
+
+                    SequentialAnimation {
+                        id: entryAnimationWorkbench
+                        PauseAnimation { duration: root.staggerDelay * 3 }
+                        ParallelAnimation {
+                            NumberAnimation {
+                                target: parent
+                                property: "opacity"
+                                from: 0
+                                to: 1
+                                duration: 300
+                                easing.type: Easing.OutCubic
+                            }
+                            NumberAnimation {
+                                target: parent
+                                property: "x"
+                                from: 30
+                                to: 0
+                                duration: 300
+                                easing.type: Easing.OutCubic
+                            }
+                        }
+                    }
 
                     FluPivot {
                         anchors.fill: parent

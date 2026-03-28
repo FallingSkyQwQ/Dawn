@@ -11,6 +11,9 @@
 #include <sstream>
 #include <utility>
 
+// Minecraft Launcher Client ID for OAuth
+static constexpr const char* MINECRAFT_CLIENT_ID = "00000000402b5328";
+
 namespace dawn::core {
 
 namespace {
@@ -346,25 +349,43 @@ AccountProfile AccountService::add_offline_profile(OfflineProfile profile, std::
 
 AccountSwitchResult AccountService::activate_account(const std::string& id, std::string* error) {
     AccountSwitchResult result;
-    bool found = false;
-    for (auto& account : accounts_) {
-        account.active = account.id == id;
-        if (account.active) {
-            found = true;
-            activeAccountId_ = account.id;
-        }
-    }
-    if (!found) {
+
+    // Find the target account
+    auto it = std::find_if(accounts_.begin(), accounts_.end(),
+        [&id](const AccountProfile& account) { return account.id == id; });
+
+    if (it == accounts_.end()) {
         result.message = "account not found";
         if (error) {
             *error = result.message;
         }
         return result;
     }
+
+    // Check if account is in failed state
+    if (it->tokenState == TokenState::Failed) {
+        result.message = "account authentication has failed and cannot be activated";
+        if (error) {
+            *error = result.message;
+        }
+        return result;
+    }
+
+    // Deactivate all accounts and activate the target
+    for (auto& account : accounts_) {
+        account.active = (account.id == id);
+    }
+    activeAccountId_ = id;
+
     result.success = true;
     result.activeAccountId = activeAccountId_;
     result.message = "account activated";
-    save(error);
+
+    if (!save(error)) {
+        result.success = false;
+        result.message = error ? *error : "failed to save account state";
+    }
+
     return result;
 }
 
@@ -379,13 +400,27 @@ bool AccountService::remove_account(const std::string& id, std::string* error) {
         return false;
     }
     accounts_.erase(it, accounts_.end());
+
+    // Handle active account removal
     if (!activeAccountId_.empty() && activeAccountId_ == id) {
         activeAccountId_.clear();
-        if (!accounts_.empty()) {
+
+        // Try to find a valid account to activate
+        for (auto& account : accounts_) {
+            if (account.tokenState != TokenState::Failed) {
+                account.active = true;
+                activeAccountId_ = account.id;
+                break;
+            }
+        }
+
+        // If no valid account found, just activate the first one
+        if (activeAccountId_.empty() && !accounts_.empty()) {
             accounts_.front().active = true;
             activeAccountId_ = accounts_.front().id;
         }
     }
+
     return save(error);
 }
 
@@ -438,14 +473,37 @@ bool AccountService::reload(std::string* error) {
         }
     }
 
+    // Validate active account exists and is valid
+    bool activeFound = false;
     if (!activeAccountId_.empty()) {
         for (auto& account : accounts_) {
             account.active = account.id == activeAccountId_;
+            if (account.active) {
+                activeFound = true;
+            }
         }
-    } else if (!accounts_.empty()) {
+    }
+
+    // If active account not found or invalid, select first valid account
+    if (!activeFound) {
+        activeAccountId_.clear();
+        for (auto& account : accounts_) {
+            // Skip accounts with failed token state
+            if (account.tokenState != TokenState::Failed) {
+                account.active = true;
+                activeAccountId_ = account.id;
+                activeFound = true;
+                break;
+            }
+        }
+    }
+
+    // If still no active account but we have accounts, use the first one
+    if (!activeFound && !accounts_.empty()) {
         accounts_.front().active = true;
         activeAccountId_ = accounts_.front().id;
     }
+
     return true;
 }
 

@@ -5,13 +5,19 @@ target_sources(dawn_core
         src/auth/account_service.cpp
         src/auth/microsoft_identity_service.cpp
         src/auth/microsoft_oauth_service.cpp
+        src/auth/offline_account_service.cpp
         src/backup/backup_service.cpp
         src/diagnostics/diagnostics_service.cpp
+        src/diagnostics/performance_advisor.cpp
         src/download/download_service.cpp
         src/content/content_install_service.cpp
         src/local/local_package_service.cpp
         src/java/java_service.cpp
+        src/loaders/fabric_installer.cpp
+        src/loaders/forge_installer.cpp
         src/loaders/loader_service.cpp
+        src/loaders/neoforge_installer.cpp
+        src/loaders/quilt_installer.cpp
         src/model/content_lock.cpp
         src/model/instance_workbench.cpp
         src/model/instance_manifest.cpp
@@ -19,7 +25,9 @@ target_sources(dawn_core
         src/model/preflight.cpp
         src/model/task_types.cpp
         src/model/content_types.cpp
+        src/minecraft/library_resolver.cpp
         src/minecraft/minecraft_service.cpp
+        src/minecraft/version_package.cpp
         src/serialization/manifest_codec.cpp
         src/interfaces/default_launcher_runtime.cpp
         src/pipeline/task_pipeline.cpp

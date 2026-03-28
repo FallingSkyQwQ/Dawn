@@ -12,6 +12,15 @@ Item {
     property int homeTaskPageCurrent: 1
     property int homeTaskItemsPerPage: 8
 
+    // Animation durations
+    readonly property int microInteractionDuration: 140  // 120-160ms
+    readonly property int panelSwitchDuration: 200  // 180-220ms
+    readonly property int pageTransitionDuration: 260  // 240-300ms
+    readonly property int staggerDelay: 40
+
+    // Loading state
+    property bool isLoading: false
+
     function recommendationCards() {
         var cards = []
         var instances = appViewModel ? appViewModel.instanceCards : []
@@ -140,6 +149,36 @@ Item {
                 title: "Dawn"
                 subtitle: "Instance management, content workflow, launch orchestration, and diagnostics."
 
+                // Entry animation
+                Component.onCompleted: {
+                    opacity = 0
+                    y = 20
+                    entryAnimation.start()
+                }
+
+                SequentialAnimation {
+                    id: entryAnimation
+                    PauseAnimation { duration: 0 }
+                    ParallelAnimation {
+                        NumberAnimation {
+                            target: parent
+                            property: "opacity"
+                            from: 0
+                            to: 1
+                            duration: 300
+                            easing.type: Easing.OutCubic
+                        }
+                        NumberAnimation {
+                            target: parent
+                            property: "y"
+                            from: 20
+                            to: 0
+                            duration: 300
+                            easing.type: Easing.OutCubic
+                        }
+                    }
+                }
+
                 RowLayout {
                     anchors.fill: parent
                     spacing: 16
@@ -167,13 +206,33 @@ Item {
                         spacing: 10
 
                         FluFilledButton {
+                            id: createInstanceBtn
                             text: "Create Demo Instance"
                             onClicked: appViewModel.createInstance("Dawn Sandbox", "1.20.1", "none")
+
+                            // Hover animation
+                            scale: hovered ? 1.05 : 1.0
+                            Behavior on scale {
+                                NumberAnimation {
+                                    duration: root.microInteractionDuration
+                                    easing.type: Easing.OutCubic
+                                }
+                            }
                         }
 
                         FluButton {
+                            id: queueTaskBtn
                             text: "Queue Demo Task"
                             onClicked: appViewModel.enqueueDemoTask("Install curated content")
+
+                            // Hover animation
+                            scale: hovered ? 1.05 : 1.0
+                            Behavior on scale {
+                                NumberAnimation {
+                                    duration: root.microInteractionDuration
+                                    easing.type: Easing.OutCubic
+                                }
+                            }
                         }
                     }
                 }
@@ -184,6 +243,36 @@ Item {
                 Layout.preferredHeight: 280
                 title: "Recommended Workspace"
                 subtitle: "Fluent carousel for recent instances and guided actions."
+
+                // Entry animation with stagger
+                Component.onCompleted: {
+                    opacity = 0
+                    y = 20
+                    entryAnimation2.start()
+                }
+
+                SequentialAnimation {
+                    id: entryAnimation2
+                    PauseAnimation { duration: root.staggerDelay }
+                    ParallelAnimation {
+                        NumberAnimation {
+                            target: parent
+                            property: "opacity"
+                            from: 0
+                            to: 1
+                            duration: 300
+                            easing.type: Easing.OutCubic
+                        }
+                        NumberAnimation {
+                            target: parent
+                            property: "y"
+                            from: 20
+                            to: 0
+                            duration: 300
+                            easing.type: Easing.OutCubic
+                        }
+                    }
+                }
 
                 FluCarousel {
                     anchors.fill: parent
@@ -197,10 +286,49 @@ Item {
                             anchors.fill: parent
 
                             FluFrame {
+                                id: carouselFrame
                                 anchors.fill: parent
                                 radius: 14
                                 color: Qt.rgba(1, 1, 1, 0.03)
                                 border.color: Qt.rgba(1, 1, 1, 0.08)
+
+                                // Hover animation properties
+                                scale: carouselMouseArea.containsMouse ? 1.02 : 1.0
+                                Behavior on scale {
+                                    NumberAnimation {
+                                        duration: root.microInteractionDuration
+                                        easing.type: Easing.OutCubic
+                                    }
+                                }
+
+                                // Shadow on hover
+                                Rectangle {
+                                    anchors.fill: parent
+                                    radius: parent.radius
+                                    color: "transparent"
+                                    opacity: carouselMouseArea.containsMouse ? 0.4 : 0
+                                    z: -1
+
+                                    Rectangle {
+                                        anchors.fill: parent
+                                        radius: parent.radius
+                                        color: Qt.rgba(0, 0, 0, 0.2)
+                                        anchors.margins: -2
+                                    }
+
+                                    Behavior on opacity {
+                                        NumberAnimation {
+                                            duration: root.microInteractionDuration
+                                            easing.type: Easing.OutCubic
+                                        }
+                                    }
+                                }
+
+                                MouseArea {
+                                    id: carouselMouseArea
+                                    anchors.fill: parent
+                                    hoverEnabled: true
+                                }
 
                                 Rectangle {
                                     anchors.left: parent.left
@@ -209,6 +337,14 @@ Item {
                                     width: 6
                                     radius: 3
                                     color: model.accent || "#4c8ad8"
+
+                                    // Animated accent bar
+                                    Behavior on width {
+                                        NumberAnimation {
+                                            duration: root.microInteractionDuration
+                                            easing.type: Easing.OutCubic
+                                        }
+                                    }
                                 }
 
                                 Column {
@@ -251,6 +387,36 @@ Item {
                 title: "Workspace FlipView"
                 subtitle: "Quick vertical preview for instance, preflight, and queue state."
 
+                // Entry animation with stagger
+                Component.onCompleted: {
+                    opacity = 0
+                    y = 20
+                    entryAnimation3.start()
+                }
+
+                SequentialAnimation {
+                    id: entryAnimation3
+                    PauseAnimation { duration: root.staggerDelay * 2 }
+                    ParallelAnimation {
+                        NumberAnimation {
+                            target: parent
+                            property: "opacity"
+                            from: 0
+                            to: 1
+                            duration: 300
+                            easing.type: Easing.OutCubic
+                        }
+                        NumberAnimation {
+                            target: parent
+                            property: "y"
+                            from: 20
+                            to: 0
+                            duration: 300
+                            easing.type: Easing.OutCubic
+                        }
+                    }
+                }
+
                 FluFlipView {
                     anchors.fill: parent
                     vertical: true
@@ -259,10 +425,26 @@ Item {
                         model: root.previewPanels()
 
                         delegate: FluFrame {
+                            id: flipFrame
                             anchors.fill: parent
                             radius: 12
                             color: Qt.rgba(1, 1, 1, 0.03)
                             border.color: Qt.rgba(1, 1, 1, 0.08)
+
+                            // Hover animation
+                            scale: flipMouseArea.containsMouse ? 1.02 : 1.0
+                            Behavior on scale {
+                                NumberAnimation {
+                                    duration: root.microInteractionDuration
+                                    easing.type: Easing.OutCubic
+                                }
+                            }
+
+                            MouseArea {
+                                id: flipMouseArea
+                                anchors.fill: parent
+                                hoverEnabled: true
+                            }
 
                             Rectangle {
                                 anchors.left: parent.left
@@ -271,6 +453,13 @@ Item {
                                 width: 6
                                 radius: 3
                                 color: modelData.accent
+
+                                Behavior on width {
+                                    NumberAnimation {
+                                        duration: root.microInteractionDuration
+                                        easing.type: Easing.OutCubic
+                                    }
+                                }
                             }
 
                             Column {
@@ -344,24 +533,144 @@ Item {
                     title: "Instances"
                     value: appViewModel.instanceCount
                     hint: "Stored instance manifests in the local data root."
+
+                    // Entry animation
+                    Component.onCompleted: {
+                        opacity = 0
+                        y = 20
+                        entryAnimationTile1.start()
+                    }
+
+                    SequentialAnimation {
+                        id: entryAnimationTile1
+                        PauseAnimation { duration: root.staggerDelay * 3 }
+                        ParallelAnimation {
+                            NumberAnimation {
+                                target: parent
+                                property: "opacity"
+                                from: 0
+                                to: 1
+                                duration: 300
+                                easing.type: Easing.OutCubic
+                            }
+                            NumberAnimation {
+                                target: parent
+                                property: "y"
+                                from: 20
+                                to: 0
+                                duration: 300
+                                easing.type: Easing.OutCubic
+                            }
+                        }
+                    }
                 }
                 DawnMetricTile {
                     Layout.fillWidth: true
                     title: "Queue"
                     value: appViewModel.taskCount
                     hint: "In-memory task queue for install and repair flows."
+
+                    // Entry animation
+                    Component.onCompleted: {
+                        opacity = 0
+                        y = 20
+                        entryAnimationTile2.start()
+                    }
+
+                    SequentialAnimation {
+                        id: entryAnimationTile2
+                        PauseAnimation { duration: root.staggerDelay * 4 }
+                        ParallelAnimation {
+                            NumberAnimation {
+                                target: parent
+                                property: "opacity"
+                                from: 0
+                                to: 1
+                                duration: 300
+                                easing.type: Easing.OutCubic
+                            }
+                            NumberAnimation {
+                                target: parent
+                                property: "y"
+                                from: 20
+                                to: 0
+                                duration: 300
+                                easing.type: Easing.OutCubic
+                            }
+                        }
+                    }
                 }
                 DawnMetricTile {
                     Layout.fillWidth: true
                     title: "Primary Instance"
                     value: appViewModel.primaryInstanceId.length > 0 ? appViewModel.primaryInstanceId : "-"
                     hint: "The first discovered instance is used for dashboard summaries."
+
+                    // Entry animation
+                    Component.onCompleted: {
+                        opacity = 0
+                        y = 20
+                        entryAnimationTile3.start()
+                    }
+
+                    SequentialAnimation {
+                        id: entryAnimationTile3
+                        PauseAnimation { duration: root.staggerDelay * 5 }
+                        ParallelAnimation {
+                            NumberAnimation {
+                                target: parent
+                                property: "opacity"
+                                from: 0
+                                to: 1
+                                duration: 300
+                                easing.type: Easing.OutCubic
+                            }
+                            NumberAnimation {
+                                target: parent
+                                property: "y"
+                                from: 20
+                                to: 0
+                                duration: 300
+                                easing.type: Easing.OutCubic
+                            }
+                        }
+                    }
                 }
                 DawnMetricTile {
                     Layout.fillWidth: true
                     title: "Preflight"
                     value: appViewModel.primaryPreflight.ready ? "Ready" : "Check"
                     hint: appViewModel.primaryPreflight.ready ? "No blocking issues were detected." : "Open diagnostics to inspect warnings or errors."
+
+                    // Entry animation
+                    Component.onCompleted: {
+                        opacity = 0
+                        y = 20
+                        entryAnimationTile4.start()
+                    }
+
+                    SequentialAnimation {
+                        id: entryAnimationTile4
+                        PauseAnimation { duration: root.staggerDelay * 6 }
+                        ParallelAnimation {
+                            NumberAnimation {
+                                target: parent
+                                property: "opacity"
+                                from: 0
+                                to: 1
+                                duration: 300
+                                easing.type: Easing.OutCubic
+                            }
+                            NumberAnimation {
+                                target: parent
+                                property: "y"
+                                from: 20
+                                to: 0
+                                duration: 300
+                                easing.type: Easing.OutCubic
+                            }
+                        }
+                    }
                 }
             }
 

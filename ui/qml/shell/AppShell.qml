@@ -4,13 +4,25 @@ import QtQuick.Layouts
 import FluentUI 1.0
 import "../components"
 import "../pages"
+import "../dialogs"
 
 Item {
     id: root
     property var appViewModel
     property int currentIndex: 0
+    property int previousIndex: 0
 
     readonly property bool showWizard: root.appViewModel && root.appViewModel.firstLaunchVisible
+
+    // Animation durations
+    readonly property int pageTransitionDuration: 260  // 240-300ms for page transitions
+    readonly property int microInteractionDuration: 140  // 120-160ms for micro interactions
+    readonly property int panelSwitchDuration: 200  // 180-220ms for panel switching
+
+    // Track navigation direction
+    onCurrentIndexChanged: {
+        previousIndex = currentIndex
+    }
 
     Connections {
         target: root.appViewModel
@@ -19,6 +31,49 @@ Item {
                 root.currentIndex = pageIndex
             }
         }
+    }
+
+    // 全局拖拽检测区域（当窗口获得拖拽时显示 DropZone）
+    DropArea {
+        id: globalDropArea
+        anchors.fill: parent
+        z: 1
+
+        onEntered: function(drag) {
+            if (drag.hasUrls && dropZone) {
+                // 检查是否有支持的文件
+                var hasSupportedFile = false
+                for (var i = 0; i < drag.urls.length; i++) {
+                    var url = drag.urls[i]
+                    var filePath = url.toString().toLowerCase()
+                    if (filePath.endsWith(".jar") || filePath.endsWith(".zip") || filePath.endsWith(".mrpack")) {
+                        hasSupportedFile = true
+                        break
+                    }
+                }
+                if (hasSupportedFile) {
+                    dropZone.show()
+                }
+            }
+        }
+    }
+
+    // 拖拽放置区域
+    DropZone {
+        id: dropZone
+        z: 9998
+
+        onFilesDropped: function(fileUrls) {
+            dragDropDialog.reset()
+            dragDropDialog.analyzeFiles(fileUrls)
+            dragDropDialog.open()
+        }
+    }
+
+    // 拖拽安装对话框
+    DragDropInstallDialog {
+        id: dragDropDialog
+        appViewModel: root.appViewModel
     }
 
     StackLayout {
@@ -81,6 +136,7 @@ Item {
                                 ]
 
                                 delegate: FluButton {
+                                    id: navButton
                                     width: parent.width
                                     height: 56
                                     text: modelData.title + "\n" + modelData.subtitle
@@ -89,10 +145,61 @@ Item {
                                     padding: 14
                                     font.pixelSize: 15
 
+                                    // Hover animation properties
+                                    property real hoverScale: 1.0
+                                    property real hoverElevation: 0
+
                                     background: Rectangle {
+                                        id: navBg
                                         radius: 16
                                         color: parent.checked ? Qt.rgba(0.26, 0.37, 0.55, 0.85) : Qt.rgba(1, 1, 1, 0.03)
                                         border.color: parent.checked ? Qt.rgba(0.48, 0.64, 0.98, 0.45) : Qt.rgba(1, 1, 1, 0.05)
+                                        border.width: parent.checked ? 2 : 1
+
+                                        // Scale animation on hover
+                                        scale: navButton.hoverScale
+
+                                        Behavior on scale {
+                                            NumberAnimation {
+                                                duration: root.microInteractionDuration
+                                                easing.type: Easing.OutCubic
+                                            }
+                                        }
+
+                                        Behavior on color {
+                                            ColorAnimation {
+                                                duration: root.microInteractionDuration
+                                            }
+                                        }
+
+                                        Behavior on border.color {
+                                            ColorAnimation {
+                                                duration: root.microInteractionDuration
+                                            }
+                                        }
+
+                                        // Shadow effect on hover
+                                        Rectangle {
+                                            id: navShadow
+                                            anchors.fill: parent
+                                            radius: parent.radius
+                                            color: "transparent"
+                                            opacity: navButton.hoverElevation
+
+                                            Rectangle {
+                                                anchors.fill: parent
+                                                radius: parent.radius
+                                                color: Qt.rgba(0, 0, 0, 0.3)
+                                                anchors.margins: -2
+                                            }
+
+                                            Behavior on opacity {
+                                                NumberAnimation {
+                                                    duration: root.microInteractionDuration
+                                                    easing.type: Easing.OutCubic
+                                                }
+                                            }
+                                        }
                                     }
 
                                     contentItem: Column {
@@ -115,6 +222,42 @@ Item {
                                     }
 
                                     onClicked: root.currentIndex = index
+
+                                    // Hover handlers
+                                    onHoveredChanged: {
+                                        hoverScale = hovered ? 1.02 : 1.0
+                                        hoverElevation = hovered ? 0.3 : 0
+                                    }
+
+                                    // Entry animation for each button
+                                    Component.onCompleted: {
+                                        opacity = 0
+                                        x = -20
+                                        entryAnimation.start()
+                                    }
+
+                                    SequentialAnimation {
+                                        id: entryAnimation
+                                        PauseAnimation { duration: index * 40 }
+                                        ParallelAnimation {
+                                            NumberAnimation {
+                                                target: navButton
+                                                property: "opacity"
+                                                from: 0
+                                                to: 1
+                                                duration: 200
+                                                easing.type: Easing.OutCubic
+                                            }
+                                            NumberAnimation {
+                                                target: navButton
+                                                property: "x"
+                                                from: -20
+                                                to: 0
+                                                duration: 200
+                                                easing.type: Easing.OutCubic
+                                            }
+                                        }
+                                    }
                                 }
                             }
 
@@ -155,17 +298,83 @@ Item {
                         border.color: Qt.rgba(1, 1, 1, 0.06)
                         border.width: 1
 
-                        StackLayout {
+                        StackView {
+                            id: pageStack
                             anchors.fill: parent
                             anchors.margins: 24
-                            currentIndex: root.currentIndex
+                            initialItem: homePage
 
-                            HomePage { id: homePage; appViewModel: root.appViewModel }
-                            InstancesPage { id: instancesPage; appViewModel: root.appViewModel }
-                            ContentCenterPage { id: contentPage; appViewModel: root.appViewModel }
-                            DownloadQueuePage { id: queuePage; appViewModel: root.appViewModel }
-                            LogsRepairPage { id: repairPage; appViewModel: root.appViewModel }
-                            SettingsPage { id: settingsPage; appViewModel: root.appViewModel }
+                            // Page transition animations
+                            replaceEnter: Transition {
+                                ParallelAnimation {
+                                    NumberAnimation {
+                                        property: "x"
+                                        from: root.currentIndex > root.previousIndex ? 40 : -40
+                                        to: 0
+                                        duration: root.pageTransitionDuration
+                                        easing.type: Easing.OutCubic
+                                    }
+                                    NumberAnimation {
+                                        property: "opacity"
+                                        from: 0
+                                        to: 1
+                                        duration: root.pageTransitionDuration
+                                        easing.type: Easing.OutCubic
+                                    }
+                                }
+                            }
+
+                            replaceExit: Transition {
+                                ParallelAnimation {
+                                    NumberAnimation {
+                                        property: "x"
+                                        from: 0
+                                        to: root.currentIndex > root.previousIndex ? -40 : 40
+                                        duration: root.pageTransitionDuration
+                                        easing.type: Easing.OutCubic
+                                    }
+                                    NumberAnimation {
+                                        property: "opacity"
+                                        from: 1
+                                        to: 0
+                                        duration: root.pageTransitionDuration
+                                        easing.type: Easing.OutCubic
+                                    }
+                                }
+                            }
+
+                            Component {
+                                id: homePage
+                                HomePage { appViewModel: root.appViewModel }
+                            }
+                            Component {
+                                id: instancesPage
+                                InstancesPage { appViewModel: root.appViewModel }
+                            }
+                            Component {
+                                id: contentPage
+                                ContentCenterPage { appViewModel: root.appViewModel }
+                            }
+                            Component {
+                                id: queuePage
+                                DownloadQueuePage { appViewModel: root.appViewModel }
+                            }
+                            Component {
+                                id: repairPage
+                                LogsRepairPage { appViewModel: root.appViewModel }
+                            }
+                            Component {
+                                id: settingsPage
+                                SettingsPage { appViewModel: root.appViewModel }
+                            }
+
+                            // Handle page switching with animation
+                            onCurrentIndexChanged: {
+                                var pages = [homePage, instancesPage, contentPage, queuePage, repairPage, settingsPage]
+                                if (root.currentIndex >= 0 && root.currentIndex < pages.length) {
+                                    pageStack.replace(pages[root.currentIndex])
+                                }
+                            }
                         }
                     }
                 }

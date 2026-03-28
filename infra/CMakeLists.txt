@@ -4,6 +4,7 @@ find_package(CURL QUIET)
 
 target_sources(dawn_infra
     PRIVATE
+        src/archive/zip_archive.cpp
         src/fs/file_system.cpp
         src/hash/sha256.cpp
         src/json/simple_json.cpp

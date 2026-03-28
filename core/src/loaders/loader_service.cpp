@@ -1,5 +1,10 @@
 #include "dawn/core/loaders/loader_service.h"
 
+#include "dawn/core/loaders/fabric_installer.h"
+#include "dawn/core/loaders/forge_installer.h"
+#include "dawn/core/loaders/neoforge_installer.h"
+#include "dawn/core/loaders/quilt_installer.h"
+
 #include "dawn/infra/json/simple_json.h"
 #include "dawn/infra/net/http_client_factory.h"
 
@@ -204,6 +209,42 @@ LoaderProfile LoaderService::recommend_loader(const std::string& mcVersion, Load
         }
     }
     return loaders.front();
+}
+
+// Factory methods to create installer instances
+std::unique_ptr<ILoaderInstaller> LoaderService::create_installer(LoaderType type) {
+    switch (type) {
+    case LoaderType::Fabric:
+        return std::make_unique<FabricInstaller>();
+    case LoaderType::Forge:
+        return std::make_unique<ForgeInstaller>();
+    case LoaderType::NeoForge:
+        return std::make_unique<NeoForgeInstaller>();
+    case LoaderType::Quilt:
+        return std::make_unique<QuiltInstaller>();
+    default:
+        return nullptr;
+    }
+}
+
+std::vector<LoaderVersion> LoaderService::list_loader_versions(LoaderType type, const std::string& mcVersion) {
+    auto installer = create_installer(type);
+    if (!installer) {
+        return {};
+    }
+    return installer->listVersions(mcVersion);
+}
+
+TaskPlan LoaderService::build_install_plan(const LoaderInstallRequest& request) {
+    auto installer = create_installer(request.loaderType);
+    if (!installer) {
+        TaskPlan plan;
+        plan.id = "error_no_installer";
+        plan.title = "Error: No installer available";
+        plan.status = TaskStatus::Failed;
+        return plan;
+    }
+    return installer->buildInstallPlan(request);
 }
 
 } // namespace dawn::core

@@ -10,6 +10,12 @@ Item {
     property int queuePageCurrent: 1
     property int queueItemsPerPage: 8
 
+    // Animation durations
+    readonly property int microInteractionDuration: 140  // 120-160ms
+    readonly property int panelSwitchDuration: 200  // 180-220ms
+    readonly property int pageTransitionDuration: 260  // 240-300ms
+    readonly property int staggerDelay: 40
+
     function progressValue(completedSteps, stepCount) {
         if (!stepCount || stepCount <= 0) {
             return 0
@@ -99,6 +105,36 @@ Item {
                 title: "Download Queue"
                 subtitle: "A unified queue for downloads, verification, extraction, and install steps."
 
+                // Entry animation
+                Component.onCompleted: {
+                    opacity = 0
+                    y = 20
+                    entryAnimation.start()
+                }
+
+                SequentialAnimation {
+                    id: entryAnimation
+                    PauseAnimation { duration: 0 }
+                    ParallelAnimation {
+                        NumberAnimation {
+                            target: parent
+                            property: "opacity"
+                            from: 0
+                            to: 1
+                            duration: 300
+                            easing.type: Easing.OutCubic
+                        }
+                        NumberAnimation {
+                            target: parent
+                            property: "y"
+                            from: 20
+                            to: 0
+                            duration: 300
+                            easing.type: Easing.OutCubic
+                        }
+                    }
+                }
+
                 Column {
                     anchors.fill: parent
                     spacing: 8
@@ -123,16 +159,78 @@ Item {
                 title: "Queue Progress"
                 subtitle: appViewModel.taskCount > 0 ? "Live progress from queued task steps." : "No active tasks."
 
+                // Entry animation
+                Component.onCompleted: {
+                    opacity = 0
+                    y = 20
+                    entryAnimation2.start()
+                }
+
+                SequentialAnimation {
+                    id: entryAnimation2
+                    PauseAnimation { duration: root.staggerDelay }
+                    ParallelAnimation {
+                        NumberAnimation {
+                            target: parent
+                            property: "opacity"
+                            from: 0
+                            to: 1
+                            duration: 300
+                            easing.type: Easing.OutCubic
+                        }
+                        NumberAnimation {
+                            target: parent
+                            property: "y"
+                            from: 20
+                            to: 0
+                            duration: 300
+                            easing.type: Easing.OutCubic
+                        }
+                    }
+                }
+
                 RowLayout {
                     anchors.fill: parent
                     spacing: 16
 
                     FluProgressRing {
+                        id: progressRing
                         Layout.preferredWidth: 56
                         Layout.preferredHeight: 56
                         indeterminate: false
                         progressVisible: true
                         value: root.queueProgressValue()
+
+                        // Smooth progress animation
+                        Behavior on value {
+                            NumberAnimation {
+                                duration: 500
+                                easing.type: Easing.OutCubic
+                            }
+                        }
+
+                        // Scale animation when progress changes
+                        SequentialAnimation {
+                            id: progressPulseAnimation
+                            NumberAnimation {
+                                target: progressRing
+                                property: "scale"
+                                from: 1.0
+                                to: 1.05
+                                duration: 100
+                            }
+                            NumberAnimation {
+                                target: progressRing
+                                property: "scale"
+                                from: 1.05
+                                to: 1.0
+                                duration: 150
+                            }
+                        }
+
+                        onValueChanged: {
+                            progressPulseAnimation.start()
+                        }
                     }
 
                     Column {
@@ -147,10 +245,35 @@ Item {
                         }
 
                         FluProgressBar {
+                            id: queueProgressBar
                             width: parent.width
                             indeterminate: false
                             progressVisible: true
                             value: root.queueProgressValue()
+
+                            // Smooth progress animation
+                            Behavior on value {
+                                NumberAnimation {
+                                    duration: 400
+                                    easing.type: Easing.OutCubic
+                                }
+                            }
+
+                            // Glow effect on progress change
+                            Rectangle {
+                                anchors.fill: parent
+                                radius: parent.radius
+                                color: "transparent"
+                                border.color: Qt.rgba(0.4, 0.7, 1, 0.6)
+                                border.width: 2
+                                opacity: 0
+
+                                Behavior on opacity {
+                                    NumberAnimation {
+                                        duration: 300
+                                    }
+                                }
+                            }
                         }
                     }
                 }
@@ -162,16 +285,55 @@ Item {
                 title: "Queue Table"
                 subtitle: "Structured queue rows rendered with FluTableView."
 
+                // Entry animation
+                Component.onCompleted: {
+                    opacity = 0
+                    y = 20
+                    entryAnimation3.start()
+                }
+
+                SequentialAnimation {
+                    id: entryAnimation3
+                    PauseAnimation { duration: root.staggerDelay * 2 }
+                    ParallelAnimation {
+                        NumberAnimation {
+                            target: parent
+                            property: "opacity"
+                            from: 0
+                            to: 1
+                            duration: 300
+                            easing.type: Easing.OutCubic
+                        }
+                        NumberAnimation {
+                            target: parent
+                            property: "y"
+                            from: 20
+                            to: 0
+                            duration: 300
+                            easing.type: Easing.OutCubic
+                        }
+                    }
+                }
+
                 Component {
                     id: comTaskProgress
                     Item {
                         FluProgressBar {
+                            id: taskProgressBar
                             anchors.verticalCenter: parent.verticalCenter
                             width: Math.max(parent.width - 12, 24)
                             x: 6
                             indeterminate: false
                             progressVisible: false
                             value: options && options.value !== undefined ? options.value : 0
+
+                            // Smooth progress animation
+                            Behavior on value {
+                                NumberAnimation {
+                                    duration: 300
+                                    easing.type: Easing.OutCubic
+                                }
+                            }
                         }
                     }
                 }
@@ -214,6 +376,60 @@ Item {
                 Layout.preferredHeight: 180
                 title: "Idle Queue"
                 subtitle: "No tasks are waiting. Queue a demo install from the content page."
+
+                // Entry animation with fade
+                Component.onCompleted: {
+                    opacity = 0
+                    scale = 0.95
+                    idleEntryAnimation.start()
+                }
+
+                SequentialAnimation {
+                    id: idleEntryAnimation
+                    PauseAnimation { duration: root.staggerDelay * 3 }
+                    ParallelAnimation {
+                        NumberAnimation {
+                            target: parent
+                            property: "opacity"
+                            from: 0
+                            to: 1
+                            duration: 400
+                            easing.type: Easing.OutCubic
+                        }
+                        NumberAnimation {
+                            target: parent
+                            property: "scale"
+                            from: 0.95
+                            to: 1.0
+                            duration: 400
+                            easing.type: Easing.OutBack
+                        }
+                    }
+                }
+
+                // Pulse animation for idle state
+                SequentialAnimation {
+                    id: idlePulseAnimation
+                    loops: Animation.Infinite
+                    running: visible
+
+                    NumberAnimation {
+                        target: parent
+                        property: "opacity"
+                        from: 1
+                        to: 0.7
+                        duration: 2000
+                        easing.type: Easing.InOutSine
+                    }
+                    NumberAnimation {
+                        target: parent
+                        property: "opacity"
+                        from: 0.7
+                        to: 1
+                        duration: 2000
+                        easing.type: Easing.InOutSine
+                    }
+                }
 
                 Column {
                     anchors.centerIn: parent

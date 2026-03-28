@@ -14,6 +14,12 @@ Item {
     property int versionPageCurrent: 1
     property int versionItemsPerPage: 6
 
+    // Animation durations
+    readonly property int microInteractionDuration: 140  // 120-160ms
+    readonly property int panelSwitchDuration: 200  // 180-220ms
+    readonly property int pageTransitionDuration: 260  // 240-300ms
+    readonly property int staggerDelay: 40
+
     function findIndexById(list, id, roleName) {
         for (var i = 0; i < list.length; ++i) {
             if (list[i] && list[i][roleName] === id) {
@@ -255,6 +261,36 @@ Item {
                 title: "Content Center"
                 subtitle: "Search content, choose a target instance, inspect dependencies, and preview a repair plan."
 
+                // Entry animation
+                Component.onCompleted: {
+                    opacity = 0
+                    y = 20
+                    entryAnimation.start()
+                }
+
+                SequentialAnimation {
+                    id: entryAnimation
+                    PauseAnimation { duration: 0 }
+                    ParallelAnimation {
+                        NumberAnimation {
+                            target: parent
+                            property: "opacity"
+                            from: 0
+                            to: 1
+                            duration: 300
+                            easing.type: Easing.OutCubic
+                        }
+                        NumberAnimation {
+                            target: parent
+                            property: "y"
+                            from: 20
+                            to: 0
+                            duration: 300
+                            easing.type: Easing.OutCubic
+                        }
+                    }
+                }
+
                 ColumnLayout {
                     anchors.fill: parent
                     spacing: 12
@@ -285,8 +321,26 @@ Item {
                         }
 
                         FluFilledButton {
+                            id: searchBtn
                             text: "Search"
                             onClicked: root.searchNow()
+
+                            // Hover animation
+                            scale: hovered ? 1.05 : 1.0
+                            Behavior on scale {
+                                NumberAnimation {
+                                    duration: root.microInteractionDuration
+                                    easing.type: Easing.OutCubic
+                                }
+                            }
+
+                            // Click animation
+                            Behavior on scale {
+                                NumberAnimation {
+                                    duration: root.microInteractionDuration
+                                    easing.type: Easing.OutBack
+                                }
+                            }
                         }
                     }
 
@@ -384,6 +438,59 @@ Item {
                         title: "Search Results"
                         subtitle: root.appViewModel.contentSearchResults.length > 0 ? "Select a result to load versions and preview." : "Run a search to populate results."
 
+                        // Entry animation
+                        Component.onCompleted: {
+                            opacity = 0
+                            x = -20
+                            entryAnimationSearch.start()
+                        }
+
+                        SequentialAnimation {
+                            id: entryAnimationSearch
+                            PauseAnimation { duration: root.staggerDelay }
+                            ParallelAnimation {
+                                NumberAnimation {
+                                    target: parent
+                                    property: "opacity"
+                                    from: 0
+                                    to: 1
+                                    duration: 300
+                                    easing.type: Easing.OutCubic
+                                }
+                                NumberAnimation {
+                                    target: parent
+                                    property: "x"
+                                    from: -20
+                                    to: 0
+                                    duration: 300
+                                    easing.type: Easing.OutCubic
+                                }
+                            }
+                        }
+
+                        // Search results update animation
+                        onSubtitleChanged: {
+                            resultsUpdateAnimation.start()
+                        }
+
+                        SequentialAnimation {
+                            id: resultsUpdateAnimation
+                            NumberAnimation {
+                                target: parent
+                                property: "opacity"
+                                from: 1
+                                to: 0.5
+                                duration: 100
+                            }
+                            NumberAnimation {
+                                target: parent
+                                property: "opacity"
+                                from: 0.5
+                                to: 1
+                                duration: 200
+                            }
+                        }
+
                         Component {
                             id: comSearchSelectAction
                             Item {
@@ -393,6 +500,15 @@ Item {
                                     onClicked: {
                                         if (options && options.projectId) {
                                             root.appViewModel.selectSearchResult(options.projectId)
+                                        }
+                                    }
+
+                                    // Hover animation
+                                    scale: hovered ? 1.1 : 1.0
+                                    Behavior on scale {
+                                        NumberAnimation {
+                                            duration: root.microInteractionDuration
+                                            easing.type: Easing.OutCubic
                                         }
                                     }
                                 }
@@ -438,6 +554,36 @@ Item {
                         title: "Versions"
                         subtitle: root.appViewModel.contentVersions.length > 0 ? "Pick a version for the selected project." : "No versions loaded yet."
 
+                        // Entry animation
+                        Component.onCompleted: {
+                            opacity = 0
+                            x = -20
+                            entryAnimationVersions.start()
+                        }
+
+                        SequentialAnimation {
+                            id: entryAnimationVersions
+                            PauseAnimation { duration: root.staggerDelay * 2 }
+                            ParallelAnimation {
+                                NumberAnimation {
+                                    target: parent
+                                    property: "opacity"
+                                    from: 0
+                                    to: 1
+                                    duration: 300
+                                    easing.type: Easing.OutCubic
+                                }
+                                NumberAnimation {
+                                    target: parent
+                                    property: "x"
+                                    from: -20
+                                    to: 0
+                                    duration: 300
+                                    easing.type: Easing.OutCubic
+                                }
+                            }
+                        }
+
                         Component {
                             id: comVersionSelectAction
                             Item {
@@ -447,6 +593,15 @@ Item {
                                     onClicked: {
                                         if (options && options.versionId) {
                                             root.appViewModel.selectInstallVersion(options.versionId)
+                                        }
+                                    }
+
+                                    // Hover animation
+                                    scale: hovered ? 1.1 : 1.0
+                                    Behavior on scale {
+                                        NumberAnimation {
+                                            duration: root.microInteractionDuration
+                                            easing.type: Easing.OutCubic
                                         }
                                     }
                                 }
@@ -492,22 +647,52 @@ Item {
                     spacing: 16
 
                     EventCenterPanel {
-                Layout.fillWidth: true
-                Layout.preferredHeight: 360
-                title: "Event Center"
-                subtitle: "Unified history for local drops, remote content installs, and repairs."
-                eventsModel: root.appViewModel.eventCenter
-                selectedContext: root.appViewModel.selectedEventContext
-                selectedEventId: root.appViewModel.selectedEventId
-                statusFilter: root.appViewModel.installLogFilter
-                sourceFilter: root.appViewModel.installLogSourceFilter
-                typeFilter: root.appViewModel.eventCenterTypeFilter
-                onEventActivated: function(eventId) { root.appViewModel.selectEvent(eventId) }
-                onStatusFilterRequested: function(value) { root.appViewModel.setInstallLogFilter(value) }
-                onSourceFilterRequested: function(value) { root.appViewModel.setInstallLogSourceFilter(value) }
-                onTypeFilterRequested: function(value) { root.appViewModel.setEventCenterTypeFilter(value) }
-                onOpenContextRequested: function() { root.appViewModel.navigateToEventContext() }
-            }
+                        Layout.fillWidth: true
+                        Layout.preferredHeight: 360
+                        title: "Event Center"
+                        subtitle: "Unified history for local drops, remote content installs, and repairs."
+                        eventsModel: root.appViewModel.eventCenter
+                        selectedContext: root.appViewModel.selectedEventContext
+                        selectedEventId: root.appViewModel.selectedEventId
+                        statusFilter: root.appViewModel.installLogFilter
+                        sourceFilter: root.appViewModel.installLogSourceFilter
+                        typeFilter: root.appViewModel.eventCenterTypeFilter
+                        onEventActivated: function(eventId) { root.appViewModel.selectEvent(eventId) }
+                        onStatusFilterRequested: function(value) { root.appViewModel.setInstallLogFilter(value) }
+                        onSourceFilterRequested: function(value) { root.appViewModel.setInstallLogSourceFilter(value) }
+                        onTypeFilterRequested: function(value) { root.appViewModel.setEventCenterTypeFilter(value) }
+                        onOpenContextRequested: function() { root.appViewModel.navigateToEventContext() }
+
+                        // Entry animation
+                        Component.onCompleted: {
+                            opacity = 0
+                            x = 20
+                            entryAnimationEvent.start()
+                        }
+
+                        SequentialAnimation {
+                            id: entryAnimationEvent
+                            PauseAnimation { duration: root.staggerDelay * 3 }
+                            ParallelAnimation {
+                                NumberAnimation {
+                                    target: parent
+                                    property: "opacity"
+                                    from: 0
+                                    to: 1
+                                    duration: 300
+                                    easing.type: Easing.OutCubic
+                                }
+                                NumberAnimation {
+                                    target: parent
+                                    property: "x"
+                                    from: 20
+                                    to: 0
+                                    duration: 300
+                                    easing.type: Easing.OutCubic
+                                }
+                            }
+                        }
+                    }
 
                     RowLayout {
                         Layout.fillWidth: true
@@ -550,14 +735,56 @@ Item {
                                     model: root.appViewModel.installPreview.versionSuggestions
 
                                     delegate: FluFrame {
+                                        id: suggestionFrame
                                         width: parent.width
                                         height: 76
                                         radius: 12
                                         color: modelData.recommended ? Qt.rgba(0.16, 0.24, 0.36, 0.95) : Qt.rgba(1, 1, 1, 0.03)
                                         border.color: Qt.rgba(1, 1, 1, 0.05)
 
+                                        // Hover animation
+                                        scale: suggestionMouseArea.containsMouse ? 1.02 : 1.0
+                                        Behavior on scale {
+                                            NumberAnimation {
+                                                duration: root.microInteractionDuration
+                                                easing.type: Easing.OutCubic
+                                            }
+                                        }
+
+                                        // Entry animation
+                                        Component.onCompleted: {
+                                            opacity = 0
+                                            x = 10
+                                            suggestionEntryAnimation.start()
+                                        }
+
+                                        SequentialAnimation {
+                                            id: suggestionEntryAnimation
+                                            PauseAnimation { duration: index * 60 }
+                                            ParallelAnimation {
+                                                NumberAnimation {
+                                                    target: suggestionFrame
+                                                    property: "opacity"
+                                                    from: 0
+                                                    to: 1
+                                                    duration: 250
+                                                    easing.type: Easing.OutCubic
+                                                }
+                                                NumberAnimation {
+                                                    target: suggestionFrame
+                                                    property: "x"
+                                                    from: 10
+                                                    to: 0
+                                                    duration: 250
+                                                    easing.type: Easing.OutCubic
+                                                }
+                                            }
+                                        }
+
                                         MouseArea {
+                                            id: suggestionMouseArea
                                             anchors.fill: parent
+                                            hoverEnabled: true
                                             onClicked: root.appViewModel.selectInstallVersion(modelData.versionId)
                                         }
 
