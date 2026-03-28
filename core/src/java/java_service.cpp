@@ -19,6 +19,7 @@
 #include <windows.h>
 #else
 #include <unistd.h>
+#include <sys/utsname.h>
 #endif
 
 namespace dawn::core {
@@ -302,7 +303,8 @@ std::vector<std::filesystem::path> discover_candidate_java_paths() {
     // Check SDKMAN installations
     if (const char* sdkmanDir = std::getenv("SDKMAN_DIR")) {
         std::filesystem::path sdkmanJavaPath(sdkmanDir);
-        sdkmanJavaPath /= "candidates" / "java";
+        sdkmanJavaPath /= "candidates";
+        sdkmanJavaPath /= "java";
         std::error_code ec;
         if (std::filesystem::is_directory(sdkmanJavaPath, ec) && !ec) {
             for (const auto& entry : std::filesystem::directory_iterator(sdkmanJavaPath, ec)) {

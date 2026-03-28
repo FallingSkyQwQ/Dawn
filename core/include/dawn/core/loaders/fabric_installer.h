@@ -11,7 +11,7 @@ namespace dawn::core {
 class FabricInstaller : public ILoaderInstaller {
 public:
     FabricInstaller();
-    ~FabricInstaller() override = default;
+    ~FabricInstaller() override;
 
     std::vector<LoaderVersion> listVersions(const std::string& mcVersion) override;
     TaskPlan buildInstallPlan(const LoaderInstallRequest& request) override;

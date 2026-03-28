@@ -105,6 +105,8 @@ struct QuiltInstaller::Impl {
 
 QuiltInstaller::QuiltInstaller() : impl_(std::make_unique<Impl>()) {}
 
+QuiltInstaller::~QuiltInstaller() = default;
+
 std::vector<LoaderVersion> QuiltInstaller::listVersions(const std::string& mcVersion) {
     std::ostringstream url;
     url << Impl::META_API_BASE << "/versions/loader/" << mcVersion;

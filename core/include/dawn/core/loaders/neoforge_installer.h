@@ -11,7 +11,7 @@ namespace dawn::core {
 class NeoForgeInstaller : public ILoaderInstaller {
 public:
     NeoForgeInstaller();
-    ~NeoForgeInstaller() override = default;
+    ~NeoForgeInstaller() override;
 
     std::vector<LoaderVersion> listVersions(const std::string& mcVersion) override;
     TaskPlan buildInstallPlan(const LoaderInstallRequest& request) override;

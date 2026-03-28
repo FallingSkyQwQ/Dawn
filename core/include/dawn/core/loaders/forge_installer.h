@@ -11,7 +11,7 @@ namespace dawn::core {
 class ForgeInstaller : public ILoaderInstaller {
 public:
     ForgeInstaller();
-    ~ForgeInstaller() override = default;
+    ~ForgeInstaller() override;
 
     std::vector<LoaderVersion> listVersions(const std::string& mcVersion) override;
     TaskPlan buildInstallPlan(const LoaderInstallRequest& request) override;

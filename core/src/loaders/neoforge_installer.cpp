@@ -122,6 +122,8 @@ struct NeoForgeInstaller::Impl {
 
 NeoForgeInstaller::NeoForgeInstaller() : impl_(std::make_unique<Impl>()) {}
 
+NeoForgeInstaller::~NeoForgeInstaller() = default;
+
 std::vector<LoaderVersion> NeoForgeInstaller::listVersions(const std::string& mcVersion) {
     const auto body = fetch_text(std::string(Impl::META_URL));
     if (body.empty()) {

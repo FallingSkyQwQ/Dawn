@@ -105,6 +105,8 @@ struct FabricInstaller::Impl {
 
 FabricInstaller::FabricInstaller() : impl_(std::make_unique<Impl>()) {}
 
+FabricInstaller::~FabricInstaller() = default;
+
 std::vector<LoaderVersion> FabricInstaller::listVersions(const std::string& mcVersion) {
     std::ostringstream url;
     url << Impl::META_API_BASE << "/versions/loader/" << mcVersion;

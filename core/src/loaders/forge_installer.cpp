@@ -139,6 +139,8 @@ struct ForgeInstaller::Impl {
 
 ForgeInstaller::ForgeInstaller() : impl_(std::make_unique<Impl>()) {}
 
+ForgeInstaller::~ForgeInstaller() = default;
+
 std::vector<LoaderVersion> ForgeInstaller::listVersions(const std::string& mcVersion) {
     std::string url = std::string(Impl::FILES_URL) + "/net/minecraftforge/forge/promotions_slim.json";
 
