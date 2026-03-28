@@ -170,8 +170,11 @@ std::string make_timestamp_filename() {
 #else
     localtime_r(&time, &tm);
 #endif
+    // Get milliseconds for uniqueness
+    auto ms = std::chrono::duration_cast<std::chrono::milliseconds>(
+        now.time_since_epoch()) % 1000;
     std::ostringstream out;
-    out << std::put_time(&tm, "%Y%m%d_%H%M%S");
+    out << std::put_time(&tm, "%Y%m%d_%H%M%S") << '_' << std::setfill('0') << std::setw(3) << ms.count();
     return out.str();
 }
 

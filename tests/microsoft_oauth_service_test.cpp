@@ -24,6 +24,7 @@ TEST(MicrosoftOAuthServiceProtocol, StartsDeviceCodeFlowWithExpectedPayload) {
 
     MicrosoftOAuthService service(client);
     DeviceCodeRequest request;
+    request.tenant = "common";
     request.clientId = "client-123";
     request.scopes = {"openid", "profile"};
 

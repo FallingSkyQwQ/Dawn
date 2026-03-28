@@ -254,7 +254,12 @@ std::vector<std::filesystem::path> discover_candidate_java_paths() {
                 continue;
             }
             for (const auto& entry : std::filesystem::directory_iterator(vendor, ec)) {
-                if (ec || !entry.is_directory()) {
+                if (ec) {
+                    continue;
+                }
+                // Use error_code overload to avoid exceptions on inaccessible files
+                bool isDir = entry.is_directory(ec);
+                if (ec || !isDir) {
                     continue;
                 }
                 // Check for nested structure (e.g., jdk-17/bin/java.exe)
@@ -262,7 +267,11 @@ std::vector<std::filesystem::path> discover_candidate_java_paths() {
 
                 // Also check direct subdirectories
                 for (const auto& subEntry : std::filesystem::directory_iterator(entry.path(), ec)) {
-                    if (ec || !subEntry.is_directory()) {
+                    if (ec) {
+                        continue;
+                    }
+                    bool isSubDir = subEntry.is_directory(ec);
+                    if (ec || !isSubDir) {
                         continue;
                     }
                     push_if_exists(&candidates, subEntry.path() / "bin" / javaName);
@@ -287,7 +296,12 @@ std::vector<std::filesystem::path> discover_candidate_java_paths() {
         std::error_code ec;
         if (std::filesystem::is_directory(path, ec) && !ec) {
             for (const auto& entry : std::filesystem::directory_iterator(path, ec)) {
-                if (ec || !entry.is_directory()) {
+                if (ec) {
+                    continue;
+                }
+                // Use error_code overload to avoid exceptions on inaccessible files
+                bool isDir = entry.is_directory(ec);
+                if (ec || !isDir) {
                     continue;
                 }
                 // Linux structure: /usr/lib/jvm/java-17-openjdk/bin/java
@@ -308,7 +322,12 @@ std::vector<std::filesystem::path> discover_candidate_java_paths() {
         std::error_code ec;
         if (std::filesystem::is_directory(sdkmanJavaPath, ec) && !ec) {
             for (const auto& entry : std::filesystem::directory_iterator(sdkmanJavaPath, ec)) {
-                if (ec || !entry.is_directory()) {
+                if (ec) {
+                    continue;
+                }
+                // Use error_code overload to avoid exceptions on inaccessible files
+                bool isDir = entry.is_directory(ec);
+                if (ec || !isDir) {
                     continue;
                 }
                 push_if_exists(&candidates, entry.path() / "bin" / javaName);
@@ -480,7 +499,12 @@ std::filesystem::path find_java_in_directory(const std::filesystem::path& dir) {
     // Search one level deep for nested structures
     if (std::filesystem::is_directory(dir, ec)) {
         for (const auto& entry : std::filesystem::directory_iterator(dir, ec)) {
-            if (ec || !entry.is_directory()) {
+            if (ec) {
+                continue;
+            }
+            // Use error_code overload to avoid exceptions on inaccessible files
+            bool isDir = entry.is_directory(ec);
+            if (ec || !isDir) {
                 continue;
             }
             pathsToCheck.push_back(entry.path() / "bin" / javaName);
