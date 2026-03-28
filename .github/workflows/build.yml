@@ -1,0 +1,58 @@
+name: Build
+
+on:
+  push:
+    branches:
+      - main
+      - master
+  workflow_dispatch:
+
+jobs:
+  full_platform_build:
+    if: ${{ github.event_name != 'push' || contains(github.event.head_commit.message, '[build]') }}
+    name: Full Build (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest, macos-latest]
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - name: Install Linux deps
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libcurl4-openssl-dev
+
+      - name: Configure (Linux/macOS)
+        if: runner.os != 'Windows'
+        run: cmake -S . -B build-full -DDAWN_ENABLE_QT=OFF -DDAWN_USE_FLUENTUI=OFF -DDAWN_BUILD_TESTS=OFF -DCMAKE_BUILD_TYPE=Release
+
+      - name: Configure (Windows)
+        if: runner.os == 'Windows'
+        run: cmake -S . -B build-full -DDAWN_ENABLE_QT=OFF -DDAWN_USE_FLUENTUI=OFF -DDAWN_BUILD_TESTS=OFF
+
+      - name: Build (Linux/macOS)
+        if: runner.os != 'Windows'
+        run: cmake --build build-full --parallel
+
+      - name: Build (Windows)
+        if: runner.os == 'Windows'
+        run: cmake --build build-full --config Release --parallel
+
+      - name: Upload Build Artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: dawn-build-${{ matrix.os }}
+          if-no-files-found: warn
+          path: |
+            build-full/app/**/dawn
+            build-full/app/**/dawn.exe
+            build-full/app/**/dawn.pdb
+            build-full/core/**/*.a
+            build-full/core/**/*.lib
