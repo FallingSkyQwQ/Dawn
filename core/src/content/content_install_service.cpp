@@ -267,6 +267,10 @@ void cleanup_target(ContentInstallResult* result, const std::string& step, const
     std::error_code ec;
     const auto removedCount = std::filesystem::remove_all(target, ec);
     if (ec) {
+        if (ec == std::errc::no_such_file_or_directory || ec == std::errc::not_a_directory) {
+            add_rollback_event(result, step, action, target, "skipped", "not present");
+            return;
+        }
         add_rollback_event(result, step, action, target, "failed", ec.message());
         return;
     }
